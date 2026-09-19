@@ -21,6 +21,7 @@ import streamlit as st
 if __package__ is None or __package__ == "":  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from debrief.app import day_view  # noqa: E402
 from debrief.app.charts import barogram, climb_profile  # noqa: E402
 from debrief.app.maps import flight_deck  # noqa: E402
 from debrief.app.theme import (  # noqa: E402
@@ -345,11 +346,27 @@ def main() -> None:
 
     st.title("Debrief")
 
-    path = _pick_flight()
+    mode = st.sidebar.radio(
+        "View",
+        ["One flight", "Compare a day"],
+        horizontal=True,
+        help="Comparing needs a whole day in the archive; import one below.",
+    )
+
+    path = _pick_flight() if mode == "One flight" else None
+    if mode == "Compare a day":
+        # The importer lives in the flight picker, which the comparison view
+        # does not draw; a day cannot be compared before it is downloaded.
+        _soaringspot_import()
 
     st.sidebar.header("Map")
     basemap = st.sidebar.selectbox("Base map", list(BASEMAPS), index=list(BASEMAPS).index(DEFAULT_BASEMAP))
     st.sidebar.caption(BASEMAPS[basemap]["attribution"])
+
+    if mode == "Compare a day":
+        airspaces = _airspace_controls(None, palette)
+        day_view.render(DEFAULT_ARCHIVE, palette, basemap, airspaces)
+        return
 
     if path is None:
         st.info(

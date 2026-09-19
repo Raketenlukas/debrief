@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from debrief.core.igc import IGCError, load_igc
@@ -61,3 +63,54 @@ class LocalArchive(FlightSource):
                 if self.strict:
                     raise
                 logger.warning("skipping %s: %s", path.name, exc)
+
+
+@dataclass(frozen=True)
+class ArchivedDay:
+    """One competition day sitting in the archive."""
+
+    competition: str
+    plane_class: str
+    date: dt.date
+    directory: Path
+    paths: tuple[Path, ...]
+
+    @property
+    def label(self) -> str:
+        return f"{self.competition} · {self.plane_class} · {self.date:%Y-%m-%d} ({len(self.paths)})"
+
+
+def archived_days(root: str | Path) -> list[ArchivedDay]:
+    """Competition days already downloaded, newest first.
+
+    Reads the layout the SoaringSpot importer writes,
+    ``<competition>/<class>/<DD-MM-YYYY>/``. Directories that do not match are
+    ignored rather than guessed at — a hand-organised archive is free to use any
+    shape it likes, it simply will not appear as a day.
+    """
+    root = Path(root)
+    if not root.is_dir():
+        return []
+
+    days: list[ArchivedDay] = []
+    for date_dir in sorted(root.glob("*/*/*")):
+        if not date_dir.is_dir():
+            continue
+        try:
+            date = dt.datetime.strptime(date_dir.name, "%d-%m-%Y").date()
+        except ValueError:
+            continue
+        paths = tuple(sorted(p for p in date_dir.glob("*.igc") if p.is_file()))
+        if not paths:
+            continue
+        days.append(
+            ArchivedDay(
+                competition=date_dir.parent.parent.name,
+                plane_class=date_dir.parent.name,
+                date=date,
+                directory=date_dir,
+                paths=paths,
+            )
+        )
+
+    return sorted(days, key=lambda d: (d.date, d.competition, d.plane_class), reverse=True)

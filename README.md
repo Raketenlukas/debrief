@@ -151,6 +151,32 @@ Either way, treat the raw IGC file as the durable asset: fetch once, store it wi
 its `source_url` and `fetched_at`, derive everything else locally. Page markup
 changes; your archive shouldn't have to.
 
+## Comparing a day
+
+Switch the sidebar to **Compare a day** to put a field side by side over one
+task. Pick the competition, class and day from the archive, then choose up to
+eight pilots — eight because that is how many slots the palette has that clear
+the colour-blind separation gates; past that pilots would share a colour and the
+legend would stop meaning anything.
+
+The barogram aligns two ways, and the difference matters:
+
+| Align on | Answers |
+|---|---|
+| each pilot's own start | how was I doing at this point of *my* task — comparable even when starts were twenty minutes apart |
+| absolute clock time | what was the sky doing *when* — whether a climb was there for everyone |
+
+**Minutes lost per leg** measures each pilot against a reference you choose.
+Bars rather than a running total, because the question is which leg cost the
+time and a cumulative line hides a leg that was clawed back.
+
+The comparison table covers four families: task speed and time delta, start
+tactics (when and how high, and how long before the first climb), climb quality
+(average, best, circling share, working band) and cruise efficiency (speed,
+achieved glide, detour). Ranks and percentiles are against the pilots you
+selected, not the whole field — comparing yourself with the three people you
+chose is usually the question being asked.
+
 ## The map
 
 deck.gl, driven from `pydeck`. Drag to pan, scroll to zoom, hover anything for

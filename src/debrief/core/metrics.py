@@ -304,6 +304,32 @@ class FlightMetrics:
         return None if ratio is None else ratio * 100.0
 
     @property
+    def best_climb_ms(self) -> float | None:
+        """The best thermal of the flight, by average climb rate."""
+        rates = [t.average_climb_ms for t in self.thermals if t.average_climb_ms is not None]
+        return max(rates) if rates else None
+
+    @property
+    def time_to_first_climb_s(self) -> float | None:
+        """Seconds from the start to entering the first thermal.
+
+        A long gap means either a confident push on a good line or a start made
+        too early; either way it is the first tactical decision of the day.
+        """
+        if self.start_time is None or not self.thermals:
+            return None
+        first = min(t.start_time for t in self.thermals)
+        if first < self.start_time:
+            return None  # climbed before starting: pre-start, not on task
+        return _seconds(self.start_time, first)
+
+    @property
+    def climbing_altitude_mean(self) -> float | None:
+        """Mean height of the climbs — the band the day was worked in."""
+        heights = [(t.entry_altitude + t.exit_altitude) / 2.0 for t in self.thermals if t.height_gain > 0]
+        return sum(heights) / len(heights) if heights else None
+
+    @property
     def distance_flown_km(self) -> float:
         if self.overall is not None:
             return self.overall.distance_flown_km

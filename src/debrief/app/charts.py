@@ -22,6 +22,7 @@ import datetime as dt
 import plotly.graph_objects as go
 
 from debrief.app.theme import Palette
+from debrief.core.compare import DayComparison
 from debrief.core.metrics import FlightMetrics, fix_altitude
 from debrief.core.models import Fix
 
@@ -204,5 +205,109 @@ def climb_profile(metrics: FlightMetrics, palette: Palette, height: int = 300) -
     layout["bargap"] = 0.0
     layout["showlegend"] = len(groups) > 1
     layout["yaxis"]["title"] = dict(text="Climb rate (m/s)", font=dict(color=palette.ink_secondary))
+    figure.update_layout(**layout)
+    return figure
+
+
+def _downsample(fixes: list, target: int = 1500) -> list:
+    """Thin a trace for overlay plotting.
+
+    A barogram of twenty flights at one fix per second is a quarter of a million
+    points, which Plotly will draw but nobody can interact with. The shape of an
+    altitude trace survives thinning; the detail belongs on the single-flight
+    view.
+    """
+    if len(fixes) <= target:
+        return fixes
+    step = len(fixes) // target + 1
+    thinned = fixes[::step]
+    if thinned[-1] is not fixes[-1]:
+        thinned.append(fixes[-1])
+    return thinned
+
+
+def comparison_barogram(
+    day: DayComparison,
+    palette: Palette,
+    align: str = "start",
+    height: int = 420,
+) -> go.Figure:
+    """Every selected pilot's altitude on one pair of axes.
+
+    ``align`` picks the x axis:
+
+    ``clock``
+        absolute time. Shows what the sky was doing when — who was where at
+        14:30, and whether a climb was there for everyone.
+    ``start``
+        seconds since that pilot's own start. Makes two flights comparable when
+        they started twenty minutes apart: "how was I doing at this point of my
+        task", not "what was everyone doing at once".
+    """
+    figure = go.Figure()
+
+    for index, metrics in enumerate(day.flights):
+        fixes = _downsample(metrics.flight.trace)
+        if align == "start" and metrics.start_time is not None:
+            xs = [(f["datetime"] - metrics.start_time).total_seconds() / 3600.0 for f in fixes]
+            hover = "%{x:.2f} h · %{y:.0f} m"
+        else:
+            xs = [f["datetime"] for f in fixes]
+            hover = "%{x|%H:%M} · %{y:.0f} m"
+
+        figure.add_trace(
+            go.Scatter(
+                x=xs,
+                y=[fix_altitude(f) for f in fixes],
+                mode="lines",
+                name=metrics.flight.pilot.label,
+                line=dict(color=palette.leg_color(index), width=2),
+                hovertemplate=hover + "<extra>%{fullData.name}</extra>",
+            )
+        )
+
+    title = "Barogram — since each pilot's start" if align == "start" else "Barogram — clock time"
+    layout = _base_layout(palette, title, height)
+    layout["hovermode"] = "closest"
+    layout["yaxis"]["title"] = dict(text="Altitude (m)", font=dict(color=palette.ink_secondary))
+    if align == "start":
+        layout["xaxis"]["title"] = dict(text="Hours since start", font=dict(color=palette.ink_secondary))
+        layout["xaxis"].pop("tickformat", None)
+    figure.update_layout(**layout)
+    return figure
+
+
+def leg_delta_chart(day: DayComparison, palette: Palette, height: int = 340) -> go.Figure:
+    """Seconds gained or lost per leg against the reference pilot.
+
+    Bars rather than a cumulative line: the question is which leg cost the time,
+    and a running total hides a leg that was clawed back.
+    """
+    figure = go.Figure()
+    reference = day.reference
+
+    for index, comparison in enumerate(day.comparisons()):
+        if reference is not None and comparison.metrics is reference:
+            continue  # a pilot against themselves is a row of zeros
+        legs = [leg for leg in comparison.legs if leg.delta_s is not None]
+        if not legs:
+            continue
+        figure.add_trace(
+            go.Bar(
+                x=[leg.label for leg in legs],
+                y=[leg.delta_s / 60.0 for leg in legs],
+                name=comparison.label,
+                marker=dict(color=palette.leg_color(index), line=dict(width=0)),
+                hovertemplate="%{x}<br>%{y:+.1f} min<extra>%{fullData.name}</extra>",
+            )
+        )
+
+    figure.add_hline(y=0, line=dict(color=palette.axis, width=1))
+
+    reference_name = reference.flight.pilot.label if reference else "reference"
+    layout = _base_layout(palette, f"Minutes lost per leg vs {reference_name}", height)
+    layout["barmode"] = "group"
+    layout["yaxis"]["title"] = dict(text="Minutes (+ = slower)", font=dict(color=palette.ink_secondary))
+    layout["xaxis"].pop("tickformat", None)
     figure.update_layout(**layout)
     return figure
