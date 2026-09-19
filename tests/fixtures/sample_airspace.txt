@@ -1,0 +1,45 @@
+* Synthetic OpenAIR sample for tests - not real airspace.
+* Exercises polygon, circle and both arc forms, plus the altitude spellings
+* that appear in real national files.
+
+AC D
+AN RIETI CTR
+AL GND
+AH 2000ft AMSL
+DP 42:25:33 N 012:56:45 E
+DP 42:30:00 N 013:00:00 E
+DP 42:20:00 N 013:05:00 E
+DP 42:18:00 N 012:50:00 E
+
+AC C
+AN ROMA TMA SECTOR 3
+AL 3500ft MSL
+AH FL195
+DP 42:00:00 N 012:30:00 E
+DP 42:10:00 N 012:45:00 E
+DP 41:55:00 N 012:55:00 E
+
+AC R
+AN LI R60 TERNI
+AL SFC
+AH 4000ft AMSL
+V X=42:34:00 N 012:39:00 E
+DC 5
+
+AC Q
+AN DANGER AREA ARC
+AL 1000ft AGL
+AH UNLIM
+V X=42:45:00 N 012:20:00 E
+V D=+
+DP 42:50:00 N 012:20:00 E
+DA 10,0,90
+
+AC W
+AN WAVE WINDOW
+AL FL100
+AH FL195
+V X=43:00:00 N 011:30:00 E
+V D=-
+DP 43:05:00 N 011:30:00 E
+DB 43:05:00 N 011:30:00 E,43:00:00 N 011:36:00 E

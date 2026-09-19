@@ -90,16 +90,57 @@ Either way, treat the raw IGC file as the durable asset: fetch once, store it wi
 its `source_url` and `fetched_at`, derive everything else locally. Page markup
 changes; your archive shouldn't have to.
 
-## Base maps
+## The map
 
-Terrain matters more than roads for soaring, so the default is **OpenTopoMap**
-rather than standard OSM carto — which is also the tile service the OSM Foundation
-asks applications not to consume. **swisstopo** is selectable and is much better in
-the Alps: no API key, access granted by Referer, free on localhost (a public
-deployment needs a WMTS account).
+deck.gl, driven from `pydeck`. Drag to pan, scroll to zoom, hover anything for
+detail: the track reports time, altitude, climb rate and ground speed; airspace
+reports its class and vertical limits; task legs and turnpoints name themselves.
+
+The track is drawn as many short segments rather than one path, because deck.gl
+picks whole paths and not vertices — a single path could only ever say "this is
+the track". Segments break at every phase change and share their boundary point,
+so the line has no gaps.
+
+### Base maps
+
+Terrain matters more than roads for soaring, so the default is **OpenTopoMap** —
+contours, relief, lakes, rivers and peaks — rather than standard OSM carto, which
+is also the tile service the OSM Foundation asks applications not to consume.
+Also selectable:
+
+| Style | What it adds |
+|---|---|
+| CARTO Voyager | roads, towns and labels; keyless, OSM-derived |
+| swisstopo | far better in the Alps; keyless, free on localhost (a public deployment needs a WMTS account) |
+| Esri World Imagery | satellite |
+
+### Airspace
+
+Read from an **OpenAIR file on disk**, not fetched. The file is the thing worth
+pinning: a flight should be debriefed against the airspace as it was, and a live
+fetch silently re-dates old flights. [openAIP](https://www.openaip.net/data/airspaces)
+publishes OpenAIR exports per country, updated weekly — drop one into
+`data/airspace/`.
+
+Polygons are coloured by what the airspace means for a glider — restricted,
+controlled, wave window, other — rather than by class letter, with the class in
+the tooltip. Fills are faint because airspace stacks vertically and an opaque
+fill would bury the track.
+
+The altitude filter hides airspace the flight was never vertically near. Limits
+given **above ground level are always kept**, because resolving them needs a
+terrain model this project does not carry yet; the filter errs toward showing an
+airspace rather than hiding one.
+
+**Not for navigation.** openAIP's data is explicitly uncertified, flight levels
+are converted at a flat 100 ft, and AGL limits are unresolved. This is a
+post-flight overlay, never guidance.
 
 ## Known constraints
 
+- Airspace vertical limits are approximate: flight levels convert at a flat
+  100 ft (pressure, not true altitude) and AGL limits are unresolved without a
+  terrain model.
 - `opensoar` 2.1.3 pins `aerofiles<1.5`, so `aerofiles` 1.5.x on PyPI cannot be
   used with it. Pinned accordingly in `pyproject.toml`.
 - Multistart tasks are not scoreable — `opensoar` does not support them.

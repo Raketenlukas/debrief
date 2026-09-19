@@ -10,3 +10,8 @@ build/
 # The IGC archive is your data, not the repo's. The demo flight is generated
 # (see the README), not committed — it is derived data.
 data/igc/*.igc
+
+# Airspace files are large third-party downloads that go stale; fetch your own
+# from openAIP rather than committing a snapshot.
+data/airspace/*
+!data/airspace/.gitkeep

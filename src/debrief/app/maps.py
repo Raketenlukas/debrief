@@ -13,8 +13,9 @@ import math
 import pydeck as pdk
 from pyproj import Geod
 
-from debrief.app.theme import TILE_SOURCES, Palette
-from debrief.core.metrics import FlightMetrics
+from debrief.app.theme import TILE_SOURCES, Palette, airspace_family
+from debrief.core.airspace import Airspace
+from debrief.core.metrics import FlightMetrics, fix_altitude
 from debrief.core.models import Fix, TaskDef
 
 GEOD = Geod(ellps="WGS84")
@@ -76,20 +77,40 @@ def _view_state(
     )
 
 
+# Every pickable datum carries its tooltip under the same key. deck.gl has one
+# tooltip template for the whole deck, so a layer using a different field name
+# would render the template literally instead of its text.
+#
+# Plain text, not HTML: through Streamlit the tooltip is rendered as text, so
+# markup arrives as visible "<b>" tags rather than bold. Line breaks are real
+# newlines and the style makes them render.
+TOOLTIP = {
+    "text": "{info}",
+    "style": {
+        "fontSize": "12px",
+        "maxWidth": "320px",
+        "whiteSpace": "pre-line",
+        "lineHeight": "1.4",
+    },
+}
+
+
 def _task_layers(task: TaskDef, palette: Palette) -> list[pdk.Layer]:
     sectors = [
         {
             "name": point.name,
+            "info": f"{point.name}\nturnpoint {index} · radius {point.r_max or 0:.0f} m",
             "polygon": _sector_ring(point.latitude, point.longitude, point.r_max or 500.0),
         }
-        for point in task.points
+        for index, point in enumerate(task.points)
     ]
     legs = [
         {
+            "info": f"{task.leg_label(i)}\ntask leg {i + 1}",
             "path": [
                 [task.points[i].longitude, task.points[i].latitude],
                 [task.points[i + 1].longitude, task.points[i + 1].latitude],
-            ]
+            ],
         }
         for i in range(task.n_legs)
     ]
@@ -108,6 +129,7 @@ def _task_layers(task: TaskDef, palette: Palette) -> list[pdk.Layer]:
             get_width=40,
             width_min_pixels=1,
             width_max_pixels=2,
+            pickable=True,
         ),
         pdk.Layer(
             "PolygonLayer",
@@ -123,38 +145,123 @@ def _task_layers(task: TaskDef, palette: Palette) -> list[pdk.Layer]:
     ]
 
 
-def _track_layers(metrics: FlightMetrics, palette: Palette) -> list[pdk.Layer]:
-    """Track split into climbs and everything else, coloured to match the barogram."""
+def _airspace_layers(airspaces: list[Airspace], palette: Palette) -> list[pdk.Layer]:
+    """One polygon per airspace ring, coloured by how restrictive it is.
+
+    Fills are deliberately faint: airspace stacks vertically, so a busy area is
+    many overlapping polygons and an opaque fill would bury the flight track.
+    The outline carries the shape; the fill only hints at density.
+    """
+    polygons = []
+    for airspace in airspaces:
+        family = airspace_family(airspace.airspace_class, airspace.airspace_type)
+        colour = hex_to_rgb(palette.airspace[family])
+        limits = f"{airspace.floor.text} \u2192 {airspace.ceiling.text}"
+        klass = airspace.airspace_class or airspace.airspace_type or "?"
+        for ring in airspace.rings:
+            polygons.append(
+                {
+                    "polygon": ring,
+                    "fill": [*colour[:3], 20],
+                    "line": [*colour[:3], 190],
+                    "info": f"{airspace.name}\nclass {klass} · {family}\n{limits}",
+                }
+            )
+
+    if not polygons:
+        return []
+
+    return [
+        pdk.Layer(
+            "PolygonLayer",
+            data=polygons,
+            get_polygon="polygon",
+            filled=True,
+            stroked=True,
+            get_fill_color="fill",
+            get_line_color="line",
+            line_width_min_pixels=1,
+            get_line_width=30,
+            pickable=True,
+            auto_highlight=True,
+        )
+    ]
+
+
+def _segment_info(fixes: list[Fix], phase: str) -> str:
+    start, end = fixes[0], fixes[-1]
+    seconds = (end["datetime"] - start["datetime"]).total_seconds()
+    climb = (fix_altitude(end) - fix_altitude(start)) / seconds if seconds else 0.0
+    distance = GEOD.inv(start["lon"], start["lat"], end["lon"], end["lat"])[2]
+    speed = (distance / seconds * 3.6) if seconds else 0.0
+    return (
+        f"{phase} {start['datetime']:%H:%M:%S}\n"
+        f"{fix_altitude(start):.0f} m \u2192 {fix_altitude(end):.0f} m"
+        f" ({climb:+.1f} m/s)\n{speed:.0f} km/h ground"
+    )
+
+
+def _track_layers(
+    metrics: FlightMetrics, palette: Palette, max_fixes_per_segment: int = 40
+) -> list[pdk.Layer]:
+    """The flown track, split into hoverable segments coloured by phase.
+
+    A deck.gl PathLayer picks whole paths, not vertices, so one path for the
+    whole flight can only ever say "this is the track". Chopping it into short
+    segments makes each one carry its own time, altitude and climb rate, which
+    is what makes the map worth hovering over.
+    """
     trace = metrics.flight.trace
     thermal_spans = [(t.start_time, t.end_time) for t in metrics.thermals]
 
-    thermal_paths = []
-    for start, end in thermal_spans:
-        segment = [[f["lon"], f["lat"]] for f in trace if start <= f["datetime"] <= end]
-        if len(segment) > 1:
-            thermal_paths.append({"path": segment})
+    def is_thermal(fix: Fix) -> bool:
+        return any(start <= fix["datetime"] <= end for start, end in thermal_spans)
 
-    full_path = [[f["lon"], f["lat"]] for f in trace]
+    segments: list[dict] = []
+    current: list[Fix] = []
+    current_phase: bool | None = None
+
+    def flush() -> None:
+        if len(current) < 2:
+            return
+        phase = "Climb" if current_phase else "Cruise"
+        colour = palette.thermal if current_phase else palette.cruise
+        segments.append(
+            {
+                "path": [[f["lon"], f["lat"]] for f in current],
+                "color": hex_to_rgb(colour, 230),
+                "width": 90 if current_phase else 60,
+                "info": _segment_info(current, phase),
+            }
+        )
+
+    for fix in trace:
+        phase = is_thermal(fix)
+        if current_phase is None:
+            current_phase = phase
+        # Break on a phase change, or when a segment gets long enough that its
+        # summary would stop describing any particular part of it.
+        if phase != current_phase or len(current) >= max_fixes_per_segment:
+            current.append(fix)  # share the boundary fix so the line has no gap
+            flush()
+            current = [fix]
+            current_phase = phase
+        else:
+            current.append(fix)
+    flush()
 
     return [
         pdk.Layer(
             "PathLayer",
-            data=[{"path": full_path}],
+            data=segments,
             get_path="path",
-            get_color=hex_to_rgb(palette.cruise, 220),
-            get_width=60,
+            get_color="color",
+            get_width="width",
             width_min_pixels=2,
-            width_max_pixels=4,
-        ),
-        pdk.Layer(
-            "PathLayer",
-            data=thermal_paths,
-            get_path="path",
-            get_color=hex_to_rgb(palette.thermal, 240),
-            get_width=90,
-            width_min_pixels=3,
             width_max_pixels=6,
-        ),
+            pickable=True,
+            auto_highlight=True,
+        )
     ]
 
 
@@ -162,8 +269,9 @@ def flight_deck(
     metrics: FlightMetrics,
     palette: Palette,
     tile_source: str,
+    airspaces: list[Airspace] | None = None,
 ) -> pdk.Deck:
-    """Build the map: base tiles, declared task, flown track."""
+    """Build the map: base tiles, airspace, declared task, flown track."""
     source = TILE_SOURCES[tile_source]
 
     layers: list[pdk.Layer] = [
@@ -176,6 +284,10 @@ def flight_deck(
             opacity=0.85,
         )
     ]
+    # Order is paint order: airspace under the task, task under the track, so
+    # the flight is never hidden by what it was flying through.
+    if airspaces:
+        layers.extend(_airspace_layers(airspaces, palette))
     if metrics.task is not None:
         layers.extend(_task_layers(metrics.task, palette))
     layers.extend(_track_layers(metrics, palette))
@@ -186,5 +298,5 @@ def flight_deck(
         # The base map is the TileLayer above, so deck.gl's own basemap is off;
         # this also avoids needing a Mapbox token.
         map_provider=None,
-        tooltip={"text": "{name}"},
+        tooltip=TOOLTIP,
     )

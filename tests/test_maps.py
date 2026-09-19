@@ -51,7 +51,43 @@ def test_expected_layers_are_present(deck_spec):
     types = [layer["@@type"] for layer in deck_spec["layers"]]
     assert types.count("TileLayer") == 1  # base map
     assert types.count("PolygonLayer") == 1  # turnpoint sectors
-    assert types.count("PathLayer") == 3  # task legs, track, thermals
+    assert types.count("PathLayer") == 2  # task legs, flown track
+
+
+def test_everything_the_user_can_point_at_is_pickable(deck_spec):
+    """An unpickable layer is invisible to the cursor however good it looks."""
+    for layer in deck_spec["layers"]:
+        if layer["@@type"] == "TileLayer":
+            continue
+        assert layer.get("pickable") is True, layer["@@type"]
+
+
+def test_track_is_split_into_hoverable_segments(deck_spec):
+    """One path for the whole flight can only say "this is the track": deck.gl
+    picks whole paths, not vertices."""
+    track = [
+        layer for layer in deck_spec["layers"] if layer["@@type"] == "PathLayer" and len(layer["data"]) > 20
+    ]
+    assert len(track) == 1
+    segments = track[0]["data"]
+    assert len(segments) > 50
+    for segment in segments:
+        assert len(segment["path"]) >= 2
+        assert segment["info"]
+        assert len(segment["color"]) == 4
+
+
+def test_track_segments_join_without_gaps(deck_spec):
+    """Adjacent segments must share their boundary point, or the drawn track
+    is a dashed line with a hole at every phase change."""
+    track = max(
+        (layer for layer in deck_spec["layers"] if layer["@@type"] == "PathLayer"),
+        key=lambda layer: len(layer["data"]),
+    )
+    segments = track["data"]
+    # Deliberately not strict=True: the offset slice is one shorter by design.
+    for first, second in zip(segments, segments[1:]):  # noqa: B905
+        assert first["path"][-1] == second["path"][0]
 
 
 def test_hex_to_rgb():
@@ -99,10 +135,71 @@ def test_view_state_frames_the_whole_track(synthetic_igc):
     assert max(rendered_width / width_px, rendered_height / height_px) > 0.6
 
 
+def _track_colours(spec):
+    track = max(
+        (layer for layer in spec["layers"] if layer["@@type"] == "PathLayer"),
+        key=lambda layer: len(layer["data"]),
+    )
+    return {tuple(segment["color"]) for segment in track["data"]}
+
+
 def test_dark_palette_produces_different_colours(synthetic_igc):
     metrics = analyse(load_igc(synthetic_igc))
     light = json.loads(flight_deck(metrics, LIGHT, "OpenTopoMap").to_json())
     dark = json.loads(flight_deck(metrics, DARK, "OpenTopoMap").to_json())
-    light_colors = [layer.get("getColor") for layer in light["layers"]]
-    dark_colors = [layer.get("getColor") for layer in dark["layers"]]
-    assert light_colors != dark_colors
+    assert _track_colours(light) != _track_colours(dark)
+
+
+def test_airspace_is_drawn_beneath_the_track(synthetic_igc):
+    """Paint order is layer order: airspace must not cover the flight."""
+    from pathlib import Path
+
+    from debrief.core.airspace import load_openair
+
+    airspaces = load_openair(Path(__file__).parent / "fixtures" / "sample_airspace.txt")
+    metrics = analyse(load_igc(synthetic_igc))
+    spec = json.loads(flight_deck(metrics, LIGHT, "OpenTopoMap", airspaces).to_json())
+
+    types = [layer["@@type"] for layer in spec["layers"]]
+    assert types.count("PolygonLayer") == 2  # airspace + turnpoint sectors
+
+    airspace_layer = spec["layers"][1]
+    assert airspace_layer["@@type"] == "PolygonLayer"
+    assert len(airspace_layer["data"]) == sum(len(a.rings) for a in airspaces)
+    track_index = max(i for i, layer in enumerate(spec["layers"]) if layer["@@type"] == "PathLayer")
+    assert track_index > 1, "airspace must be painted before the track"
+
+    for polygon in airspace_layer["data"]:
+        assert polygon["fill"][3] < 64, "airspace fill must stay faint; they stack"
+        assert polygon["line"][3] > polygon["fill"][3]
+        assert polygon["info"]
+
+
+def test_no_airspace_means_no_airspace_layer(synthetic_igc):
+    metrics = analyse(load_igc(synthetic_igc))
+    spec = json.loads(flight_deck(metrics, LIGHT, "OpenTopoMap", []).to_json())
+    assert [layer["@@type"] for layer in spec["layers"]].count("PolygonLayer") == 1
+
+
+def test_tooltips_are_plain_text_not_html(deck_spec):
+    """Through Streamlit the deck tooltip renders as text, so markup arrives as
+    visible "<b>" tags instead of bold. Caught only by looking at the running
+    app, so it is pinned here."""
+    for layer in deck_spec["layers"]:
+        if not isinstance(layer.get("data"), list):
+            continue
+        for datum in layer["data"]:
+            info = datum.get("info")
+            if info is None:
+                continue
+            assert "<" not in info and ">" not in info, info
+
+
+def test_every_pickable_datum_has_a_tooltip(deck_spec):
+    """A pickable layer whose data lacks the shared field shows the raw
+    template, because deck.gl has one tooltip for the whole deck."""
+    for layer in deck_spec["layers"]:
+        if not layer.get("pickable") or not isinstance(layer.get("data"), list):
+            continue
+        for datum in layer["data"]:
+            assert datum.get("info"), f"{layer['@@type']} datum without tooltip text"

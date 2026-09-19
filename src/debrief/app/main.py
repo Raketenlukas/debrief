@@ -23,12 +23,20 @@ if __package__ is None or __package__ == "":  # pragma: no cover
 
 from debrief.app.charts import barogram, climb_profile  # noqa: E402
 from debrief.app.maps import flight_deck  # noqa: E402
-from debrief.app.theme import DEFAULT_TILE_SOURCE, TILE_SOURCES, palette_for  # noqa: E402
+from debrief.app.theme import (  # noqa: E402
+    DEFAULT_TILE_SOURCE,
+    TILE_SOURCES,
+    airspace_family,
+    palette_for,
+)
+from debrief.core.airspace import Airspace, load_openair  # noqa: E402
 from debrief.core.igc import IGCError, load_igc  # noqa: E402
 from debrief.core.metrics import FlightMetrics, analyse  # noqa: E402
 from debrief.sources.local import LocalArchive  # noqa: E402
 
 DEFAULT_ARCHIVE = Path("data/igc")
+DEFAULT_AIRSPACE = Path("data/airspace")
+METRES_TO_FEET = 3.280839895
 
 
 def _fmt(value: float | None, spec: str = ".1f", suffix: str = "") -> str:
@@ -48,6 +56,74 @@ def _analyse_path(path: str, mtime: float) -> FlightMetrics:
     """Cache on (path, mtime) so editing a file busts the entry."""
     del mtime
     return analyse(load_igc(path))
+
+
+@st.cache_data(show_spinner=False)
+def _load_airspace(path: str, mtime: float) -> list[Airspace]:
+    """Cache on (path, mtime): a national OpenAIR file is thousands of records."""
+    del mtime
+    return load_openair(path)
+
+
+def _airspace_controls(metrics: FlightMetrics | None, palette) -> list[Airspace]:
+    """Pick an OpenAIR file and filter it down to what is worth drawing."""
+    st.sidebar.header("Airspace")
+
+    uploaded = st.sidebar.file_uploader("OpenAIR file", type=["txt", "air", "openair"])
+    path: Path | None = None
+    if uploaded is not None:
+        target = Path(tempfile.gettempdir()) / "debrief-airspace"
+        target.mkdir(exist_ok=True)
+        path = target / uploaded.name
+        path.write_bytes(uploaded.getvalue())
+    else:
+        candidates = sorted(DEFAULT_AIRSPACE.glob("*")) if DEFAULT_AIRSPACE.is_dir() else []
+        candidates = [c for c in candidates if c.is_file() and not c.name.startswith(".")]
+        if candidates:
+            path = st.sidebar.selectbox("File", candidates, format_func=lambda p: p.name)
+
+    if path is None:
+        st.sidebar.caption(
+            f"Drop an OpenAIR file into `{DEFAULT_AIRSPACE}/` to overlay airspace. "
+            "openAIP publishes them per country, updated weekly."
+        )
+        return []
+
+    try:
+        airspaces = _load_airspace(str(path), path.stat().st_mtime)
+    except (OSError, ValueError) as exc:
+        st.sidebar.error(f"Could not read airspace: {exc}")
+        return []
+
+    if not airspaces:
+        st.sidebar.warning("No airspace records found in that file.")
+        return []
+
+    families = sorted({airspace_family(a.airspace_class, a.airspace_type) for a in airspaces})
+    shown = st.sidebar.multiselect("Show", families, default=families)
+    airspaces = [a for a in airspaces if airspace_family(a.airspace_class, a.airspace_type) in shown]
+
+    if metrics is not None:
+        band_only = st.sidebar.checkbox(
+            "Only airspace in my altitude band",
+            value=True,
+            help=(
+                "Hides airspace the flight was never vertically near. Limits given "
+                "above ground level are kept, since resolving them needs terrain data."
+            ),
+        )
+        if band_only and metrics.legs:
+            low = min(leg.altitude_min for leg in metrics.legs) * METRES_TO_FEET
+            high = max(leg.altitude_max for leg in metrics.legs) * METRES_TO_FEET
+            airspaces = [a for a in airspaces if a.intersects_band(low, high)]
+            st.sidebar.caption(f"Flight band {low:.0f}-{high:.0f} ft")
+
+    legend = " · ".join(f"<span style='color:{palette.airspace[f]}'>&#9632;</span> {f}" for f in shown)
+    st.sidebar.markdown(
+        f"{len(airspaces)} shown<br/>{legend}<br/><span style='opacity:.7'>Not for navigation.</span>",
+        unsafe_allow_html=True,
+    )
+    return airspaces
 
 
 def _pick_flight() -> Path | None:
@@ -189,10 +265,13 @@ def main() -> None:
         st.error(str(exc))
         return
 
+    airspaces = _airspace_controls(metrics, palette)
+
     _header(metrics)
     _stat_tiles(metrics)
 
-    st.pydeck_chart(flight_deck(metrics, palette, tile_source), use_container_width=True)
+    st.pydeck_chart(flight_deck(metrics, palette, tile_source, airspaces), use_container_width=True)
+    st.caption("Drag to pan, scroll to zoom, hover the track or an airspace for detail.")
     st.plotly_chart(barogram(metrics, palette), use_container_width=True)
     st.plotly_chart(climb_profile(metrics, palette), use_container_width=True)
 

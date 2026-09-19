@@ -33,6 +33,7 @@ class Palette:
     series: tuple[str, ...]
     spatial_series: tuple[str, ...]
     overflow: str
+    airspace: dict[str, str]
     cruise: str
     thermal: str
     thermal_band: str
@@ -70,6 +71,15 @@ LIGHT = Palette(
     ),
     spatial_series=("#2a78d6", "#eb6834", "#1baf7a"),
     overflow="#898781",
+    airspace={
+        # Restriction severity, not class letter: what a pilot needs off a
+        # glance is "may I be here", and the class is in the tooltip anyway.
+        # These are the reserved status steps, never reused for a data series.
+        "restricted": "#d03b3b",
+        "controlled": "#2a78d6",
+        "wave": "#0ca30c",
+        "other": "#898781",
+    },
     cruise="#2a78d6",
     thermal="#eb6834",
     thermal_band="rgba(235, 104, 52, 0.13)",
@@ -95,10 +105,51 @@ DARK = Palette(
     ),
     spatial_series=("#3987e5", "#d95926", "#199e70"),
     overflow="#898781",
+    airspace={
+        "restricted": "#d03b3b",
+        "controlled": "#3987e5",
+        "wave": "#0ca30c",
+        "other": "#898781",
+    },
     cruise="#3987e5",
     thermal="#d95926",
     thermal_band="rgba(217, 89, 38, 0.18)",
 )
+
+
+# OpenAIR class letters grouped by what they mean for a glider pilot. Unknown
+# classes fall through to "other" rather than being dropped, so a country file
+# using a local code still draws.
+AIRSPACE_FAMILY: dict[str, str] = {
+    # Keep out, or ask first.
+    "P": "restricted",
+    "R": "restricted",
+    "Q": "restricted",
+    "GP": "restricted",
+    "TRA": "restricted",
+    "TSA": "restricted",
+    "PROHIBITED": "restricted",
+    "RESTRICTED": "restricted",
+    "DANGER": "restricted",
+    # Controlled: entry needs a clearance.
+    "A": "controlled",
+    "B": "controlled",
+    "C": "controlled",
+    "D": "controlled",
+    "CTR": "controlled",
+    "CTA": "controlled",
+    "TMA": "controlled",
+    # A wave window is a permission, not a restriction.
+    "W": "wave",
+    "GSEC": "wave",
+}
+
+
+def airspace_family(airspace_class: str | None, airspace_type: str | None = None) -> str:
+    for value in (airspace_class, airspace_type):
+        if value and value.strip().upper() in AIRSPACE_FAMILY:
+            return AIRSPACE_FAMILY[value.strip().upper()]
+    return "other"
 
 
 # Base maps. Terrain matters far more than roads for soaring, so the default is a
@@ -114,6 +165,13 @@ TILE_SOURCES: dict[str, dict[str, str]] = {
         # public deployment needs a WMTS account from swisstopo.
         "url": "https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg",
         "attribution": "© swisstopo",
+    },
+    "CARTO Voyager (streets)": {
+        # Roads, towns and labels, rendered from OpenStreetMap data. Keyless,
+        # unlike most vector-tile hosts, and it carries the place-name detail a
+        # topographic style leaves out.
+        "url": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+        "attribution": "© OpenStreetMap contributors, © CARTO",
     },
     "Esri World Imagery": {
         "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
