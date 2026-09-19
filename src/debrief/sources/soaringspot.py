@@ -259,18 +259,26 @@ def discover_days(url: str, session=None) -> list[DayLink]:
     return sorted(days, key=lambda d: (d.date, d.plane_class))
 
 
-def import_competition(
+def import_days(
     url: str,
     archive_root: str | Path,
+    plane_class: str | None = None,
     include_hc_competitors: bool = True,
     progress=None,
 ) -> list[SoaringSpotDay]:
-    """Download every class and day of a competition from one link.
+    """Download the days a competition publishes, optionally one class only.
 
     Days that fail are reported and skipped: one unreadable day should not cost
     the rest of a two-week contest.
     """
     links = discover_days(url)
+    if plane_class is not None:
+        links = [link for link in links if link.plane_class == plane_class]
+        if not links:
+            raise SoaringSpotError(
+                f"no days found for class {plane_class!r}. The competition publishes "
+                "other classes; check the class in the URL."
+            )
     if not links:
         raise SoaringSpotError(
             f"no competition days found from {url!r}. The results page may use a "
@@ -292,3 +300,42 @@ def import_competition(
     if progress is not None:
         progress(len(links), len(links), "done")
     return imported
+
+
+def import_class(
+    url: str,
+    archive_root: str | Path,
+    include_hc_competitors: bool = True,
+    progress=None,
+) -> list[SoaringSpotDay]:
+    """Every day of the class the URL names.
+
+    The usual unit of interest: a pilot flies one class, and the other classes
+    are a download nobody asked for. The class is taken from the URL rather
+    than chosen separately, so pasting any of that class's results links is
+    enough.
+    """
+    _, plane_class, _ = parse_daily_url(url)
+    return import_days(
+        url,
+        archive_root,
+        plane_class=plane_class,
+        include_hc_competitors=include_hc_competitors,
+        progress=progress,
+    )
+
+
+def import_competition(
+    url: str,
+    archive_root: str | Path,
+    include_hc_competitors: bool = True,
+    progress=None,
+) -> list[SoaringSpotDay]:
+    """Every class and every day. Rarely what you want; see :func:`import_class`."""
+    return import_days(
+        url,
+        archive_root,
+        plane_class=None,
+        include_hc_competitors=include_hc_competitors,
+        progress=progress,
+    )

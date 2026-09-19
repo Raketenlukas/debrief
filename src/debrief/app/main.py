@@ -37,7 +37,7 @@ from debrief.sources.local import LocalArchive  # noqa: E402
 from debrief.sources.soaringspot import (  # noqa: E402
     SoaringSpotDay,
     SoaringSpotError,
-    import_competition,
+    import_class,
 )
 
 DEFAULT_ARCHIVE = Path("data/igc")
@@ -167,22 +167,23 @@ def _soaringspot_import() -> None:
             (st.success if level == "ok" else st.warning)(text)
 
         url = st.text_input(
-            "Any results URL from the competition",
+            "A results URL for your class",
             placeholder="https://www.soaringspot.com/en_gb/<comp>/results/<class>/<date>/daily",
             help=(
-                "Paste any results link from the competition. The whole-competition "
-                "import finds every class and day from it."
+                "Paste any results link for the class you flew. Every day of that "
+                "class is found from it; other classes are left alone."
             ),
         )
         include_hc = st.checkbox("Include hors-concours pilots", value=True)
 
-        whole = st.button("Download whole competition", disabled=not url, type="primary")
+        whole = st.button("Download whole class", disabled=not url, type="primary")
         single = st.button("Just this one day", disabled=not url)
 
         if not (whole or single):
             st.caption(
-                "Every competitor's IGC file is downloaded. Each carries the task, "
-                "so a day becomes comparable against a single task."
+                "Every day of the class in that URL, and every competitor's IGC "
+                "file for each. Each file carries the task, so a day becomes "
+                "comparable against a single task."
             )
             return
 
@@ -194,11 +195,10 @@ def _soaringspot_import() -> None:
                 def on_day(done: int, total: int, label: str) -> None:
                     progress.progress(min(done / max(total, 1), 1.0), text=f"{done}/{total} · {label}")
 
-                days = import_competition(
-                    url, DEFAULT_ARCHIVE, include_hc_competitors=include_hc, progress=on_day
-                )
+                days = import_class(url, DEFAULT_ARCHIVE, include_hc_competitors=include_hc, progress=on_day)
                 flights = sum(len(list(day.archive_paths())) for day in days)
-                message = f"Imported {flights} flights across {len(days)} days."
+                plane_class = days[0].plane_class if days else "?"
+                message = f"Imported {flights} flights across {len(days)} days of {plane_class}."
             else:
 
                 def on_file(done: int, total: int) -> None:

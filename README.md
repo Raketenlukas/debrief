@@ -128,16 +128,19 @@ axis being privileged.
 Currently: **local files you downloaded yourself.** `sources/base.py` is the seam
 for the rest.
 
-- **SoaringSpot import** — built, in `sources/soaringspot.py`. Paste *any*
-  results URL from a competition and take either the single day or the whole
-  contest — every class, every day:
+- **SoaringSpot import** — built, in `sources/soaringspot.py`. Paste a results
+  URL for **your class** and take every day of it, or just the single day:
 
   ```
   https://www.soaringspot.com/en_gb/<competition>/results/<class>/<date>/daily
   ```
 
-  The competition index is derived from whatever you paste, so one link is
-  enough. Discovery reads **anchors, not tables**: results tables vary by
+  The class is taken from the URL and the competition index derived from it, so
+  one link is enough. Other classes are left alone — a pilot flies one class,
+  and the rest is a download nobody asked for. `import_competition()` takes the
+  whole contest if you ever want it.
+
+  Discovery reads **anchors, not tables**: results tables vary by
   competition and change between seasons, but a link to a day is a link
   whatever markup wraps it, which makes this the sturdier half of the scraping.
 

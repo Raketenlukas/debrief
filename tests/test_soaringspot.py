@@ -233,6 +233,36 @@ def test_discovery_ignores_links_that_are_not_days(server):
     assert all(d.competition == "test-comp" for d in days)
 
 
+def test_class_import_takes_every_day_of_that_class_only(server, tmp_path):
+    """A pilot flies one class; the others are a download nobody asked for."""
+    from debrief.sources.local import archived_days
+    from debrief.sources.soaringspot import import_class
+    from tests.fixtures.fake_soaringspot import DEFAULT_DAYS
+
+    expected = [d for d in DEFAULT_DAYS if d[0] == "club"]
+    imported = import_class(server.daily_url(plane_class="club"), tmp_path)
+    assert len(imported) == len(expected)
+
+    archived = archived_days(tmp_path)
+    assert {d.plane_class for d in archived} == {"club"}
+    assert {f"{d.date:%Y-%m-%d}" for d in archived} == {date[-10:] for _, date in expected}
+
+
+def test_class_import_follows_the_class_in_the_url(server, tmp_path):
+    from debrief.sources.local import archived_days
+    from debrief.sources.soaringspot import import_class
+
+    import_class(server.daily_url(plane_class="18m"), tmp_path)
+    assert {d.plane_class for d in archived_days(tmp_path)} == {"18m"}
+
+
+def test_a_class_with_no_days_is_reported_not_silently_empty(server, tmp_path):
+    from debrief.sources.soaringspot import import_days
+
+    with pytest.raises(SoaringSpotError, match="no days found for class"):
+        import_days(server.daily_url(), tmp_path, plane_class="standard")
+
+
 def test_whole_competition_import_downloads_every_day(server, tmp_path):
     from debrief.sources.local import archived_days
     from debrief.sources.soaringspot import import_competition
