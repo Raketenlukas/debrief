@@ -58,6 +58,24 @@ def _analyse_path(path: str, mtime: float) -> FlightMetrics:
     return analyse(load_igc(path))
 
 
+def _safe_upload_path(directory: Path, name: str, fallback: str) -> Path:
+    """Place an uploaded file inside ``directory``, never outside it.
+
+    An upload's filename is attacker-controlled: browsers send only a basename,
+    but nothing stops a crafted request to the upload endpoint from sending
+    "../../../.ssh/authorized_keys". Joining that onto a directory and writing
+    it escapes the directory, so the name is reduced to its final component and
+    the result is checked against the directory before anything is written.
+    """
+    base = Path(name).name
+    if not base or base in {".", ".."}:
+        base = fallback
+    candidate = (directory / base).resolve()
+    if not candidate.is_relative_to(directory.resolve()):  # pragma: no cover - belt and braces
+        raise ValueError(f"refusing to write an upload outside {directory}")
+    return candidate
+
+
 @st.cache_data(show_spinner=False)
 def _load_airspace(path: str, mtime: float) -> list[Airspace]:
     """Cache on (path, mtime): a national OpenAIR file is thousands of records."""
@@ -74,7 +92,7 @@ def _airspace_controls(metrics: FlightMetrics | None, palette) -> list[Airspace]
     if uploaded is not None:
         target = Path(tempfile.gettempdir()) / "debrief-airspace"
         target.mkdir(exist_ok=True)
-        path = target / uploaded.name
+        path = _safe_upload_path(target, uploaded.name, "airspace.txt")
         path.write_bytes(uploaded.getvalue())
     else:
         candidates = sorted(DEFAULT_AIRSPACE.glob("*")) if DEFAULT_AIRSPACE.is_dir() else []
@@ -133,7 +151,7 @@ def _pick_flight() -> Path | None:
     if uploaded is not None:
         temp_dir = Path(tempfile.gettempdir()) / "debrief-uploads"
         temp_dir.mkdir(exist_ok=True)
-        target = temp_dir / uploaded.name
+        target = _safe_upload_path(temp_dir, uploaded.name, "upload.igc")
         target.write_bytes(uploaded.getvalue())
         return target
 

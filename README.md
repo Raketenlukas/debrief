@@ -136,6 +136,29 @@ airspace rather than hiding one.
 are converted at a flat 100 ft, and AGL limits are unresolved. This is a
 post-flight overlay, never guidance.
 
+## Running it safely
+
+The app binds **loopback only** (`server.address = "127.0.0.1"` in
+`.streamlit/config.toml`). Streamlit's own default listens on every interface,
+which matters here because the sidebar lets whoever opens the app type a
+directory path and list the flights under it — fine for you on your own machine,
+not fine for everyone on club wifi. Change it to `0.0.0.0` only deliberately,
+and only behind authentication.
+
+Uploaded filenames are attacker-controlled, so they are reduced to a basename
+and checked to land inside the target directory before anything is written; see
+`_safe_upload_path` and `tests/test_upload_safety.py`.
+
+IGC and OpenAIR parsing is plain text parsing — no `eval`, `exec` or `pickle` at
+runtime in the parsing dependencies — so opening a stranger's flight log is not
+itself risky. The residual risk is the usual one for any Python project: the
+~50 packages this pulls in. Install into a project virtualenv (as below), not
+system-wide.
+
+Fetching map tiles tells the tile provider your IP and which tiles you asked
+for, which is roughly where you fly. Use the offline-friendly base map or none
+at all if that matters to you.
+
 ## Known constraints
 
 - Airspace vertical limits are approximate: flight levels convert at a flat

@@ -2,5 +2,12 @@
 headless = true
 port = 8501
 
+# Bind to the loopback interface only. Streamlit's default (server.address
+# unset) listens on every interface, so on shared wifi anyone on the network
+# can open the app — and the app lets whoever opens it type a directory path
+# and list flights under it. Set this to 0.0.0.0 deliberately, and only behind
+# authentication, if you ever want it reachable from another machine.
+address = "127.0.0.1"
+
 [browser]
 gatherUsageStats = false
