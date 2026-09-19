@@ -1,0 +1,133 @@
+"""SoaringSpot day import.
+
+These run opensoar's real scraping code against a local server serving a page
+shaped like SoaringSpot's, rather than stubbing the scraper out. Stubbing would
+only prove the mock matches my assumptions; this proves the integration finds
+the table, digs the IGC link out of the data-content popover, and fetches the
+files.
+
+What it cannot prove is that SoaringSpot's markup still looks like this. That
+is the standing risk of scraping, and the reason the downloaded IGC files are
+the durable asset rather than anything re-derived from the page.
+"""
+
+import datetime as dt
+
+import pytest
+
+from debrief.core.metrics import analyse_or_summarise
+from debrief.sources.soaringspot import SoaringSpotDay, SoaringSpotError, parse_daily_url
+from tests.fixtures.fake_soaringspot import DEFAULT_COMPETITORS, FakeSoaringSpot
+
+
+@pytest.fixture
+def server():
+    with FakeSoaringSpot() as running:
+        yield running
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://www.soaringspot.com/en/rieti-2026/results/club/task-1-on-2026-08-09/daily",
+            ("rieti-2026", "club", dt.date(2026, 8, 9)),
+        ),
+        (
+            "www.soaringspot.com/en/wgc-2025/results/18m/day-3-2025-07-14",
+            ("wgc-2025", "18m", dt.date(2025, 7, 14)),
+        ),
+    ],
+)
+def test_daily_url_parsing(url, expected):
+    assert parse_daily_url(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.soaringspot.com/en/rieti-2026/",
+        "https://www.soaringspot.com/en/rieti-2026/news/something/else",
+        "https://example.com/",
+    ],
+)
+def test_a_url_that_is_not_a_daily_results_page_is_refused_early(url):
+    """opensoar splits the URL positionally, so a bad one fails deep inside the
+    download with an unhelpful error. Catch it where it can be explained."""
+    with pytest.raises(SoaringSpotError, match="daily results URL"):
+        parse_daily_url(url)
+
+
+def test_url_without_a_readable_date_is_refused():
+    with pytest.raises(SoaringSpotError, match="date"):
+        parse_daily_url("https://www.soaringspot.com/en/comp/results/club/no-date-here/daily")
+
+
+def test_imports_every_competitor(server, tmp_path):
+    flights = list(SoaringSpotDay(server.daily_url(), tmp_path).flights())
+    assert len(flights) == len(DEFAULT_COMPETITORS)
+    assert {f.pilot.competition_id for f in flights} == {c.competition_id for c in DEFAULT_COMPETITORS}
+
+
+def test_files_land_in_the_archive_and_are_reused(server, tmp_path):
+    """The raw file is the durable asset: a second pass must not refetch."""
+    day = SoaringSpotDay(server.daily_url(), tmp_path)
+    list(day.flights())
+    first_pass = len(server.requests_made)
+    assert list(day.archive_paths()), "nothing was written to the archive"
+
+    list(SoaringSpotDay(server.daily_url(), tmp_path).flights())
+    assert len(server.requests_made) == first_pass, "second pass refetched the day"
+
+
+def test_every_flight_carries_the_task_and_the_same_task_key(server, tmp_path):
+    """The premise of same-task comparison, end to end from a results page."""
+    flights = list(SoaringSpotDay(server.daily_url(), tmp_path).flights())
+    assert all(f.task is not None for f in flights)
+    assert len({f.task_key for f in flights}) == 1
+    assert len({f.pilot_key for f in flights}) == len(flights)
+
+
+def test_provenance_records_the_page_not_the_local_copy(server, tmp_path):
+    flights = list(SoaringSpotDay(server.daily_url(), tmp_path).flights())
+    for flight in flights:
+        assert flight.source.kind == "soaringspot"
+        assert flight.source.reference == server.daily_url()
+        assert flight.competition.competition == "test-comp"
+        assert flight.competition.plane_class == "club"
+
+
+def test_imported_flights_analyse_and_rank_sensibly(server, tmp_path):
+    """The faster simulated glider must score the faster task speed."""
+    flights = {
+        f.pilot.competition_id: analyse_or_summarise(f)
+        for f in SoaringSpotDay(server.daily_url(), tmp_path).flights()
+    }
+    assert flights["7L"].task_speed_kmh > flights["XY"].task_speed_kmh
+    assert flights["XY"].task_speed_kmh > flights["ZZ"].task_speed_kmh
+    assert all(m.completed for m in flights.values())
+
+
+def test_hors_concours_competitors_can_be_excluded(server, tmp_path):
+    included = list(SoaringSpotDay(server.daily_url(), tmp_path / "with").flights())
+    excluded = list(
+        SoaringSpotDay(server.daily_url(), tmp_path / "without", include_hc_competitors=False).flights()
+    )
+    assert "ZZ" in {f.pilot.competition_id for f in included}
+    assert "ZZ" not in {f.pilot.competition_id for f in excluded}
+
+
+def test_an_unreachable_page_fails_with_a_usable_message(tmp_path):
+    url = "http://127.0.0.1:9/en/comp/results/club/task-2024-06-15/daily"
+    with pytest.raises(SoaringSpotError, match="could not import"):
+        SoaringSpotDay(url, tmp_path).download()
+
+
+def test_download_returns_a_sized_sequence(server, tmp_path):
+    """Annotated as list[Path] but returned as an iterator, which every test
+    here hid by wrapping it in list(). The app called len() on it and crashed."""
+    paths = SoaringSpotDay(server.daily_url(), tmp_path).download()
+    assert len(paths) == len(DEFAULT_COMPETITORS)
+    assert all(p.suffix == ".igc" for p in paths)
+    # Sequences can be walked twice; iterators cannot.
+    assert list(paths) == list(paths)

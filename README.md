@@ -116,10 +116,21 @@ axis being privileged.
 Currently: **local files you downloaded yourself.** `sources/base.py` is the seam
 for the rest.
 
-- **SoaringSpot scraping** — `opensoar.competition.soaringspot.SoaringSpotDaily`
-  takes a daily-results URL, finds each competitor's IGC link (it lives inside the
-  `data-content` popover attribute on the CN column, not a plain `href`) and
-  downloads the lot. No authentication.
+- **SoaringSpot day import** — built, in `sources/soaringspot.py`. Paste a daily
+  results URL into the sidebar and it downloads every competitor's IGC file:
+
+  ```
+  https://www.soaringspot.com/en/<competition>/results/<class>/<date>/daily
+  ```
+
+  Scraping is delegated to `opensoar`, which knows the awkward part — the IGC link
+  is not a plain `href` but lives inside the `data-content` popover attribute on
+  the contest-number column. No authentication. Files land in
+  `data/igc/<comp>/<class>/<date>/` and are skipped on a second run.
+
+  Because every downloaded file carries the task, one import gives you the whole
+  day against a single `task_key` — which is the same-task comparison axis the
+  data model was built for.
 - **SoaringSpot API** — REST, hal+json, HMAC-signed. The catch is that the
   AppID/secret is issued *per competition* by that competition's organiser, so it
   cannot cover contests you have no contact at.
@@ -212,6 +223,12 @@ at all if that matters to you.
 ```bash
 .venv/bin/python -m pytest
 ```
+
+The SoaringSpot importer is tested against a **local HTTP server** serving a page
+shaped like a real results page (`tests/fixtures/fake_soaringspot.py`), so
+opensoar's actual scraping code runs end to end without the network. What that
+cannot prove is that SoaringSpot's markup still looks like this — the standing
+risk of scraping, and the reason the downloaded IGC files are the durable asset.
 
 There are no real competition IGC files in the repo. `tests/fixtures/synthetic.py`
 flies a synthetic glider around a 311 km triangle and writes a valid SoaringSpot

@@ -33,6 +33,10 @@ from debrief.core.airspace import Airspace, load_openair  # noqa: E402
 from debrief.core.igc import IGCError, load_igc  # noqa: E402
 from debrief.core.metrics import FlightMetrics, analyse_or_summarise  # noqa: E402
 from debrief.sources.local import LocalArchive  # noqa: E402
+from debrief.sources.soaringspot import (  # noqa: E402
+    SoaringSpotDay,
+    SoaringSpotError,
+)
 
 DEFAULT_ARCHIVE = Path("data/igc")
 DEFAULT_AIRSPACE = Path("data/airspace")
@@ -144,6 +148,65 @@ def _airspace_controls(metrics: FlightMetrics | None, palette) -> list[Airspace]
     return airspaces
 
 
+def _soaringspot_import() -> None:
+    """Download a whole SoaringSpot competition day into the archive.
+
+    Behind a button rather than on every rerun: this fetches one file per
+    competitor from someone else's server. Files already downloaded are skipped,
+    so pressing it twice is cheap.
+    """
+    with st.sidebar.expander("Import a SoaringSpot day"):
+        # An st.rerun() discards anything written before it, so the outcome of
+        # the previous run's import is carried across in session state and
+        # shown here instead of vanishing.
+        outcome = st.session_state.pop("soaringspot_outcome", None)
+        if outcome:
+            level, text = outcome
+            (st.success if level == "ok" else st.warning)(text)
+
+        url = st.text_input(
+            "Daily results URL",
+            placeholder="https://www.soaringspot.com/en/<comp>/results/<class>/<date>/daily",
+        )
+        include_hc = st.checkbox("Include hors-concours pilots", value=True)
+
+        if not st.button("Download day", disabled=not url):
+            st.caption(
+                "Imports every competitor's IGC file. Each one carries the task, "
+                "so the whole day becomes comparable against the same task."
+            )
+            return
+
+        progress = st.progress(0.0, text="Reading the results page…")
+
+        def on_progress(done: int, total: int) -> None:
+            total = max(total, 1)
+            progress.progress(min(done / total, 1.0), text=f"Downloading {done}/{total}…")
+
+        try:
+            day = SoaringSpotDay(url, DEFAULT_ARCHIVE, include_hc_competitors=include_hc)
+            paths = day.download(progress=on_progress)
+        except SoaringSpotError as exc:
+            progress.empty()
+            st.error(str(exc))
+            return
+
+        progress.empty()
+        if not paths:
+            st.session_state["soaringspot_outcome"] = (
+                "warn",
+                "That page yielded no flights.",
+            )
+        else:
+            st.session_state["soaringspot_outcome"] = (
+                "ok",
+                f"Imported {len(paths)} flights into `{day.day_directory}`.",
+            )
+        # The archive picker was built earlier in this run, so it only sees the
+        # new files after a rerun.
+        st.rerun()
+
+
 def _pick_flight() -> Path | None:
     st.sidebar.header("Flight")
 
@@ -154,6 +217,8 @@ def _pick_flight() -> Path | None:
         target = _safe_upload_path(temp_dir, uploaded.name, "upload.igc")
         target.write_bytes(uploaded.getvalue())
         return target
+
+    _soaringspot_import()
 
     root = Path(st.sidebar.text_input("…or an archive directory", str(DEFAULT_ARCHIVE)))
     paths = list(LocalArchive(root).archive_paths())
