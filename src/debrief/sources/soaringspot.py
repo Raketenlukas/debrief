@@ -23,8 +23,9 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from debrief.core.igc import IGCError, load_igc
 from debrief.core.models import CompetitionDayRef, Flight, FlightSource
@@ -175,3 +176,119 @@ class SoaringSpotDay(FlightSourceBase):
                 imported_at=dt.datetime.now(dt.UTC),
             )
             yield flight
+
+
+@dataclass(frozen=True)
+class DayLink:
+    """One class-day of a competition, as advertised by its results pages."""
+
+    url: str
+    competition: str
+    plane_class: str
+    date: dt.date
+
+    @property
+    def label(self) -> str:
+        return f"{self.plane_class} · {self.date:%Y-%m-%d}"
+
+
+def competition_results_url(url: str) -> str:
+    """The competition's results index, from any URL inside that competition.
+
+    Pasting one link should be enough, so the index is derived rather than asked
+    for: everything up to and including ``/results``.
+    """
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    parts = [p for p in parsed.path.split("/") if p]
+    if "results" in parts:
+        parts = parts[: parts.index("results") + 1]
+    elif len(parts) >= 2:
+        parts = [*parts[:2], "results"]
+    else:
+        raise SoaringSpotError(f"cannot find a competition in {url!r}")
+    return parsed._replace(path="/" + "/".join(parts), query="", fragment="").geturl()
+
+
+def discover_days(url: str, session=None) -> list[DayLink]:
+    """Every class and day a competition publishes, found from one link.
+
+    Discovery reads anchors, not tables. Results *tables* vary by competition
+    and change between seasons; a link to a day is a link whatever markup wraps
+    it, so this is the sturdier half of the scraping.
+
+    The index is read first, then each class page it reveals, because some
+    competitions list only the classes up front and the days one level down.
+    """
+    import requests
+    from bs4 import BeautifulSoup
+
+    session = session or requests
+    index_url = competition_results_url(url)
+    competition = parse_daily_url(url)[0] if "results" in url else None
+
+    def links_on(page_url: str) -> set[DayLink]:
+        try:
+            response = session.get(page_url, timeout=30)
+            response.raise_for_status()
+        except Exception as exc:
+            raise SoaringSpotError(f"could not read {page_url}: {exc}") from exc
+
+        found: set[DayLink] = set()
+        for anchor in BeautifulSoup(response.text, "html.parser").find_all("a", href=True):
+            absolute = urljoin(page_url, anchor["href"])
+            try:
+                comp, plane_class, date = parse_daily_url(absolute)
+            except SoaringSpotError:
+                continue  # not a day link; most of a page is not
+            if competition and comp != competition:
+                continue
+            found.add(
+                DayLink(
+                    url=normalise_daily_url(absolute)[0],
+                    competition=comp,
+                    plane_class=plane_class,
+                    date=date,
+                )
+            )
+        return found
+
+    days = links_on(index_url)
+    for plane_class in sorted({day.plane_class for day in days}):
+        days |= links_on(f"{index_url}/{plane_class}")
+
+    return sorted(days, key=lambda d: (d.date, d.plane_class))
+
+
+def import_competition(
+    url: str,
+    archive_root: str | Path,
+    include_hc_competitors: bool = True,
+    progress=None,
+) -> list[SoaringSpotDay]:
+    """Download every class and day of a competition from one link.
+
+    Days that fail are reported and skipped: one unreadable day should not cost
+    the rest of a two-week contest.
+    """
+    links = discover_days(url)
+    if not links:
+        raise SoaringSpotError(
+            f"no competition days found from {url!r}. The results page may use a "
+            "layout this cannot read; importing a single day still works."
+        )
+
+    imported: list[SoaringSpotDay] = []
+    for index, link in enumerate(links, start=1):
+        if progress is not None:
+            progress(index - 1, len(links), link.label)
+        day = SoaringSpotDay(link.url, archive_root, include_hc_competitors=include_hc_competitors)
+        try:
+            day.download()
+        except SoaringSpotError as exc:
+            logger.warning("skipping %s: %s", link.label, exc)
+            continue
+        imported.append(day)
+
+    if progress is not None:
+        progress(len(links), len(links), "done")
+    return imported

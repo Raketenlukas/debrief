@@ -128,12 +128,18 @@ axis being privileged.
 Currently: **local files you downloaded yourself.** `sources/base.py` is the seam
 for the rest.
 
-- **SoaringSpot day import** — built, in `sources/soaringspot.py`. Paste a daily
-  results URL into the sidebar and it downloads every competitor's IGC file:
+- **SoaringSpot import** — built, in `sources/soaringspot.py`. Paste *any*
+  results URL from a competition and take either the single day or the whole
+  contest — every class, every day:
 
   ```
-  https://www.soaringspot.com/en/<competition>/results/<class>/<date>/daily
+  https://www.soaringspot.com/en_gb/<competition>/results/<class>/<date>/daily
   ```
+
+  The competition index is derived from whatever you paste, so one link is
+  enough. Discovery reads **anchors, not tables**: results tables vary by
+  competition and change between seasons, but a link to a day is a link
+  whatever markup wraps it, which makes this the sturdier half of the scraping.
 
   Scraping is delegated to `opensoar`, which knows the awkward part — the IGC link
   is not a plain `href` but lives inside the `data-content` popover attribute on

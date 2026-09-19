@@ -32,11 +32,39 @@ class Competitor:
     climb_rate: float = 2.2
 
 
+# Several classes, several days: enough shape to test discovering a whole
+# competition from one link.
+DEFAULT_DAYS: tuple[tuple[str, str], ...] = (
+    ("club", "task-1-on-2024-06-15"),
+    ("club", "task-2-on-2024-06-16"),
+    ("18m", "task-1-on-2024-06-15"),
+    ("18m", "task-3-on-2024-06-17"),
+)
+
+
 DEFAULT_COMPETITORS = (
     Competitor("1", "7L", "Anna Beispiel", "Ventus 3", 34.0, 2.4),
     Competitor("2", "XY", "Beat Muster", "ASG 29", 31.0, 2.0),
     Competitor("HC", "ZZ", "Carla Ospite", "LS8", 29.0, 1.8),
 )
+
+
+def competition_index_html(competition: str, days: tuple[tuple[str, str], ...], lang: str) -> str:
+    """The competition's results page: links to every class and day.
+
+    Real pages vary wildly in layout, so discovery reads anchors rather than
+    tables — a link is a link whatever it is wrapped in.
+    """
+    links = "".join(
+        f'<li><a href="/{lang}/{competition}/results/{klass}/{date}/daily">{klass} — {date}</a></li>'
+        for klass, date in days
+    )
+    return (
+        "<html><body><h1>Results</h1>"
+        f'<nav><a href="/{lang}/{competition}/">Home</a>'
+        f'<a href="/{lang}/{competition}/news">News</a></nav>'
+        f"<ul>{links}</ul></body></html>"
+    )
 
 
 def results_html(competitors: tuple[Competitor, ...]) -> str:
@@ -72,8 +100,25 @@ class _Handler(BaseHTTPRequestHandler):
     date: dt.date = dt.date(2024, 6, 15)
     request_log: list[str] = []
 
+    days: tuple[tuple[str, str], ...] = DEFAULT_DAYS
+
     def do_GET(self):  # noqa: N802 - name fixed by BaseHTTPRequestHandler
         type(self).request_log.append(self.path)
+
+        parts = [p for p in self.path.split("/") if p]
+        # /<lang>/<competition>/results  (and /results/<class>) list the days.
+        if len(parts) in (3, 4) and parts[2] == "results":
+            body = competition_index_html(parts[1], self.days, parts[0]).encode()
+            if len(parts) == 4:  # a class page shows only that class
+                body = competition_index_html(
+                    parts[1], tuple(d for d in self.days if d[0] == parts[3]), parts[0]
+                ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
 
         if self.path.endswith(".igc"):
             competition_id = self.path.rsplit("/", 1)[-1][: -len(".igc")]
@@ -113,10 +158,13 @@ class FakeSoaringSpot:
         self,
         competitors: tuple[Competitor, ...] = DEFAULT_COMPETITORS,
         date: dt.date = dt.date(2024, 6, 15),
+        days: tuple[tuple[str, str], ...] = DEFAULT_DAYS,
     ):
         _Handler.competitors = competitors
         _Handler.date = date
+        _Handler.days = days
         _Handler.request_log = []
+        self.days = days
         self.date = date
         self._server = HTTPServer(("127.0.0.1", 0), _Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
@@ -133,6 +181,9 @@ class FakeSoaringSpot:
     @property
     def port(self) -> int:
         return self._server.server_address[1]
+
+    def competition_url(self, competition: str = "test-comp", lang: str = "en") -> str:
+        return f"http://127.0.0.1:{self.port}/{lang}/{competition}/results"
 
     def daily_url(self, competition: str = "test-comp", plane_class: str = "club") -> str:
         return (

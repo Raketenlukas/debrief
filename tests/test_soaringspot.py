@@ -190,3 +190,87 @@ def test_a_non_results_url_is_returned_untouched_for_the_parser_to_reject():
     assert normalise_daily_url(url) == (url, None)
     with pytest.raises(SoaringSpotError):
         parse_daily_url(url)
+
+
+# -- whole-competition import -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "expected_tail"),
+    [
+        (REAL_URL, "/en_gb/cim-coppa-internazionale-del-mediterraneo-rieti-2026/results"),
+        ("https://www.soaringspot.com/en/comp/results/club/task-1-on-2024-06-15/daily", "/en/comp/results"),
+        ("https://www.soaringspot.com/en/comp/results", "/en/comp/results"),
+        ("https://www.soaringspot.com/en/comp/", "/en/comp/results"),
+    ],
+)
+def test_the_competition_index_is_derived_from_any_url_inside_it(url, expected_tail):
+    """Pasting one link should be enough; the index is derived, not asked for."""
+    from debrief.sources.soaringspot import competition_results_url
+
+    assert competition_results_url(url).endswith(expected_tail)
+
+
+def test_discovery_finds_every_class_and_day(server, tmp_path):
+    from debrief.sources.soaringspot import discover_days
+    from tests.fixtures.fake_soaringspot import DEFAULT_DAYS
+
+    days = discover_days(server.daily_url())
+    assert {(d.plane_class, f"{d.date:%Y-%m-%d}") for d in days} == {
+        (klass, date[-10:]) for klass, date in DEFAULT_DAYS
+    }
+    # Days are returned in flying order.
+    assert [d.date for d in days] == sorted(d.date for d in days)
+
+
+def test_discovery_ignores_links_that_are_not_days(server):
+    """Most of a results page is navigation; only day links count."""
+    from debrief.sources.soaringspot import discover_days
+
+    days = discover_days(server.daily_url())
+    assert all("/results/" in d.url for d in days)
+    assert all(d.url.endswith("/daily") for d in days)
+    assert all(d.competition == "test-comp" for d in days)
+
+
+def test_whole_competition_import_downloads_every_day(server, tmp_path):
+    from debrief.sources.local import archived_days
+    from debrief.sources.soaringspot import import_competition
+    from tests.fixtures.fake_soaringspot import DEFAULT_DAYS
+
+    imported = import_competition(server.daily_url(), tmp_path)
+    assert len(imported) == len(DEFAULT_DAYS)
+
+    archived = archived_days(tmp_path)
+    assert len(archived) == len(DEFAULT_DAYS)
+    assert {d.plane_class for d in archived} == {klass for klass, _ in DEFAULT_DAYS}
+    assert all(len(d.paths) == len(DEFAULT_COMPETITORS) for d in archived)
+
+
+def test_whole_competition_import_reports_progress(server, tmp_path):
+    from debrief.sources.soaringspot import import_competition
+
+    seen = []
+    import_competition(server.daily_url(), tmp_path, progress=lambda i, n, label: seen.append((i, n, label)))
+    assert seen[0][0] == 0
+    assert seen[-1][0] == seen[-1][1], "progress must finish at 100%"
+    assert all(total == seen[0][1] for _, total, _ in seen)
+
+
+def test_a_second_whole_import_refetches_nothing(server, tmp_path):
+    """Days already on disk are the durable asset; re-running resumes."""
+    from debrief.sources.soaringspot import import_competition
+
+    import_competition(server.daily_url(), tmp_path)
+    igc_requests = [p for p in server.requests_made if p.endswith(".igc")]
+
+    import_competition(server.daily_url(), tmp_path)
+    assert [p for p in server.requests_made if p.endswith(".igc")] == igc_requests
+
+
+def test_a_competition_with_no_day_links_says_so(tmp_path):
+    from debrief.sources.soaringspot import import_competition
+
+    url = "http://127.0.0.1:9/en/comp/results/club/task-1-on-2024-06-15/daily"
+    with pytest.raises(SoaringSpotError, match="could not read|no competition days"):
+        import_competition(url, tmp_path)

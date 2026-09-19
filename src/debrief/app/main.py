@@ -37,6 +37,7 @@ from debrief.sources.local import LocalArchive  # noqa: E402
 from debrief.sources.soaringspot import (  # noqa: E402
     SoaringSpotDay,
     SoaringSpotError,
+    import_competition,
 )
 
 DEFAULT_ARCHIVE = Path("data/igc")
@@ -150,13 +151,13 @@ def _airspace_controls(metrics: FlightMetrics | None, palette) -> list[Airspace]
 
 
 def _soaringspot_import() -> None:
-    """Download a whole SoaringSpot competition day into the archive.
+    """Download a SoaringSpot competition, or a single day of it.
 
     Behind a button rather than on every rerun: this fetches one file per
-    competitor from someone else's server. Files already downloaded are skipped,
-    so pressing it twice is cheap.
+    competitor from someone else's server. Files already downloaded are
+    skipped, so pressing it again is cheap and a part-finished import resumes.
     """
-    with st.sidebar.expander("Import a SoaringSpot day"):
+    with st.sidebar.expander("Import from SoaringSpot", expanded=False):
         # An st.rerun() discards anything written before it, so the outcome of
         # the previous run's import is carried across in session state and
         # shown here instead of vanishing.
@@ -166,46 +167,59 @@ def _soaringspot_import() -> None:
             (st.success if level == "ok" else st.warning)(text)
 
         url = st.text_input(
-            "Daily results URL",
-            placeholder="https://www.soaringspot.com/en/<comp>/results/<class>/<date>/daily",
+            "Any results URL from the competition",
+            placeholder="https://www.soaringspot.com/en_gb/<comp>/results/<class>/<date>/daily",
+            help=(
+                "Paste any results link from the competition. The whole-competition "
+                "import finds every class and day from it."
+            ),
         )
         include_hc = st.checkbox("Include hors-concours pilots", value=True)
 
-        if not st.button("Download day", disabled=not url):
+        whole = st.button("Download whole competition", disabled=not url, type="primary")
+        single = st.button("Just this one day", disabled=not url)
+
+        if not (whole or single):
             st.caption(
-                "Imports every competitor's IGC file. Each one carries the task, "
-                "so the whole day becomes comparable against the same task."
+                "Every competitor's IGC file is downloaded. Each carries the task, "
+                "so a day becomes comparable against a single task."
             )
             return
 
         progress = st.progress(0.0, text="Reading the results page…")
 
-        def on_progress(done: int, total: int) -> None:
-            total = max(total, 1)
-            progress.progress(min(done / total, 1.0), text=f"Downloading {done}/{total}…")
-
         try:
-            day = SoaringSpotDay(url, DEFAULT_ARCHIVE, include_hc_competitors=include_hc)
-            if day.url_note:
-                st.caption(day.url_note)
-            paths = day.download(progress=on_progress)
+            if whole:
+
+                def on_day(done: int, total: int, label: str) -> None:
+                    progress.progress(min(done / max(total, 1), 1.0), text=f"{done}/{total} · {label}")
+
+                days = import_competition(
+                    url, DEFAULT_ARCHIVE, include_hc_competitors=include_hc, progress=on_day
+                )
+                flights = sum(len(list(day.archive_paths())) for day in days)
+                message = f"Imported {flights} flights across {len(days)} days."
+            else:
+
+                def on_file(done: int, total: int) -> None:
+                    progress.progress(min(done / max(total, 1), 1.0), text=f"Downloading {done}/{total}…")
+
+                day = SoaringSpotDay(url, DEFAULT_ARCHIVE, include_hc_competitors=include_hc)
+                if day.url_note:
+                    st.caption(day.url_note)
+                paths = day.download(progress=on_file)
+                message = f"Imported {len(paths)} flights into `{day.day_directory}`."
+                days = [day] if paths else []
         except SoaringSpotError as exc:
             progress.empty()
             st.error(str(exc))
             return
 
         progress.empty()
-        if not paths:
-            st.session_state["soaringspot_outcome"] = (
-                "warn",
-                "That page yielded no flights.",
-            )
-        else:
-            st.session_state["soaringspot_outcome"] = (
-                "ok",
-                f"Imported {len(paths)} flights into `{day.day_directory}`.",
-            )
-        # The archive picker was built earlier in this run, so it only sees the
+        st.session_state["soaringspot_outcome"] = (
+            ("ok", message) if days else ("warn", "That page yielded no flights.")
+        )
+        # The day pickers were built earlier in this run, so they only see the
         # new files after a rerun.
         st.rerun()
 
