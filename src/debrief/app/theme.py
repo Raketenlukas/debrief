@@ -152,34 +152,90 @@ def airspace_family(airspace_class: str | None, airspace_type: str | None = None
     return "other"
 
 
-# Base maps. Terrain matters far more than roads for soaring, so the default is a
-# topographic style rather than standard OSM carto — which is also the tile
-# service the OSM Foundation asks applications not to consume.
-TILE_SOURCES: dict[str, dict[str, str]] = {
-    "OpenTopoMap": {
-        "url": "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
+# Base maps are MapLibre *style* URLs, not raster tile templates.
+#
+# A deck.gl TileLayer cannot draw raster tiles on its own: its default
+# renderSubLayers builds a GeoJsonLayer, so a PNG tile is fetched and then
+# silently dropped. Rendering rasters needs a renderSubLayers callback, which is
+# a JS function and therefore cannot cross pydeck's JSON bridge. The basemap
+# belongs to the map, not to a layer.
+#
+# The CARTO styles need no API key. Raster sources (terrain, satellite) are
+# wrapped in a minimal style document below.
+BASEMAPS: dict[str, dict[str, str]] = {
+    "Clean (CARTO Positron)": {
+        "style": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+        "attribution": "© OpenStreetMap contributors, © CARTO",
+    },
+    "Streets (CARTO Voyager)": {
+        "style": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+        "attribution": "© OpenStreetMap contributors, © CARTO",
+    },
+    "Dark (CARTO Dark Matter)": {
+        "style": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+        "attribution": "© OpenStreetMap contributors, © CARTO",
+    },
+    "Terrain (OpenTopoMap)": {
+        "raster": "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
         "attribution": "Map data: © OpenStreetMap contributors, SRTM | Style: © OpenTopoMap (CC-BY-SA)",
+    },
+    "Satellite (Esri)": {
+        "raster": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "attribution": "© Esri, Maxar, Earthstar Geographics",
     },
     "swisstopo (CH only)": {
         # No API key: access is granted by Referer and is free on localhost. A
         # public deployment needs a WMTS account from swisstopo.
-        "url": "https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg",
+        "raster": "https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg",
         "attribution": "© swisstopo",
-    },
-    "CARTO Voyager (streets)": {
-        # Roads, towns and labels, rendered from OpenStreetMap data. Keyless,
-        # unlike most vector-tile hosts, and it carries the place-name detail a
-        # topographic style leaves out.
-        "url": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
-        "attribution": "© OpenStreetMap contributors, © CARTO",
-    },
-    "Esri World Imagery": {
-        "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        "attribution": "© Esri, Maxar, Earthstar Geographics",
     },
 }
 
-DEFAULT_TILE_SOURCE = "OpenTopoMap"
+DEFAULT_BASEMAP = "Clean (CARTO Positron)"
+
+
+def raster_style(url: str, attribution: str, background: str = "#e8eef5") -> str:
+    """Wrap a raster tile template in a MapLibre style, as a data URL.
+
+    MapLibre takes a style document; deck.gl's JSON bridge can only carry a
+    string. Encoding the document as a data URL keeps raster basemaps available
+    without a tile-rendering layer.
+    """
+    import json
+    from urllib.parse import quote
+
+    style = {
+        "version": 8,
+        "sources": {
+            "raster-source": {
+                "type": "raster",
+                "tiles": [url],
+                "tileSize": 256,
+                "attribution": attribution,
+            }
+        },
+        "layers": [
+            {"id": "background", "type": "background", "paint": {"background-color": background}},
+            {"id": "raster-layer", "type": "raster", "source": "raster-source"},
+        ],
+    }
+    return "data:application/json," + quote(json.dumps(style))
+
+
+def basemap_style(name: str) -> str:
+    """The style URL for a named basemap, wrapping raster sources as needed.
+
+    A value that is already a style URL passes through, so a custom or
+    self-hosted MapLibre style can be used without editing this table.
+    """
+    source = BASEMAPS.get(name)
+    if source is None:
+        if name.startswith(("http://", "https://", "data:")):
+            return name
+        raise KeyError(f"unknown basemap {name!r}; expected one of {sorted(BASEMAPS)}")
+    if "style" in source:
+        return source["style"]
+    return raster_style(source["raster"], source["attribution"])
 
 
 def palette_for(theme_base: str | None) -> Palette:

@@ -24,8 +24,8 @@ if __package__ is None or __package__ == "":  # pragma: no cover
 from debrief.app.charts import barogram, climb_profile  # noqa: E402
 from debrief.app.maps import flight_deck  # noqa: E402
 from debrief.app.theme import (  # noqa: E402
-    DEFAULT_TILE_SOURCE,
-    TILE_SOURCES,
+    BASEMAPS,
+    DEFAULT_BASEMAP,
     airspace_family,
     palette_for,
 )
@@ -348,10 +348,8 @@ def main() -> None:
     path = _pick_flight()
 
     st.sidebar.header("Map")
-    tile_source = st.sidebar.selectbox(
-        "Base map", list(TILE_SOURCES), index=list(TILE_SOURCES).index(DEFAULT_TILE_SOURCE)
-    )
-    st.sidebar.caption(TILE_SOURCES[tile_source]["attribution"])
+    basemap = st.sidebar.selectbox("Base map", list(BASEMAPS), index=list(BASEMAPS).index(DEFAULT_BASEMAP))
+    st.sidebar.caption(BASEMAPS[basemap]["attribution"])
 
     if path is None:
         st.info(
@@ -372,7 +370,7 @@ def main() -> None:
     _header(metrics)
     _stat_tiles(metrics)
 
-    st.pydeck_chart(flight_deck(metrics, palette, tile_source, airspaces), use_container_width=True)
+    st.pydeck_chart(flight_deck(metrics, palette, basemap, airspaces), use_container_width=True)
     st.caption("Drag to pan, scroll to zoom, hover the track or an airspace for detail.")
     st.plotly_chart(barogram(metrics, palette), use_container_width=True)
     st.plotly_chart(climb_profile(metrics, palette), use_container_width=True)

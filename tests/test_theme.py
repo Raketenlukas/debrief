@@ -7,7 +7,7 @@ reordering it casually, quietly breaks that property.
 
 import pytest
 
-from debrief.app.theme import DARK, DEFAULT_TILE_SOURCE, LIGHT, TILE_SOURCES, palette_for
+from debrief.app.theme import BASEMAPS, DARK, DEFAULT_BASEMAP, LIGHT, palette_for
 
 
 @pytest.mark.parametrize("palette", [LIGHT, DARK], ids=["light", "dark"])
@@ -38,9 +38,32 @@ def test_palette_selection():
     assert palette_for(None) is LIGHT
 
 
-def test_every_tile_source_is_usable():
-    assert DEFAULT_TILE_SOURCE in TILE_SOURCES
-    for name, source in TILE_SOURCES.items():
-        assert source["url"].startswith("https://"), name
-        assert "{z}" in source["url"] and "{x}" in source["url"] and "{y}" in source["url"], name
+def test_every_basemap_resolves_to_a_style():
+    """A basemap is a MapLibre style, not a tile template: deck.gl's TileLayer
+    fetches raster tiles and then silently drops them, which is what left the
+    track floating on a blank page."""
+    from debrief.app.theme import basemap_style
+
+    assert DEFAULT_BASEMAP in BASEMAPS
+    for name, source in BASEMAPS.items():
         assert source["attribution"].strip(), name
+        style = basemap_style(name)
+        if "raster" in source:
+            # A raster source is wrapped in a style document, carried inline.
+            assert style.startswith("data:application/json,"), name
+            assert "{z}" in source["raster"], name
+            assert "%7B%22version%22%3A%208" in style, name  # {"version": 8
+        else:
+            assert style.startswith("https://"), name
+            assert style.endswith("style.json"), name
+
+
+def test_raster_basemaps_keep_their_attribution_in_the_style():
+    """MapLibre shows the source's attribution; dropping it would strip credit."""
+    from urllib.parse import unquote
+
+    from debrief.app.theme import basemap_style
+
+    style = unquote(basemap_style("Terrain (OpenTopoMap)"))
+    assert "OpenTopoMap" in style
+    assert "OpenStreetMap" in style

@@ -20,7 +20,7 @@ from debrief.core.metrics import analyse
 @pytest.fixture(scope="module")
 def deck_spec(synthetic_igc):
     metrics = analyse(load_igc(synthetic_igc))
-    return json.loads(flight_deck(metrics, LIGHT, "OpenTopoMap").to_json())
+    return json.loads(flight_deck(metrics, LIGHT, "Clean (CARTO Positron)").to_json())
 
 
 def test_only_accessor_properties_become_expressions(deck_spec):
@@ -49,9 +49,17 @@ def test_path_widths_are_clamped_in_pixels(deck_spec):
 
 def test_expected_layers_are_present(deck_spec):
     types = [layer["@@type"] for layer in deck_spec["layers"]]
-    assert types.count("TileLayer") == 1  # base map
+    # No TileLayer: the basemap is the map's style, not a layer.
+    assert "TileLayer" not in types
     assert types.count("PolygonLayer") == 1  # turnpoint sectors
     assert types.count("PathLayer") == 2  # task legs, flown track
+
+
+def test_the_basemap_is_a_style_and_the_provider_is_keyless(deck_spec):
+    """map_provider=None switches the basemap off entirely, which is the bug
+    that left the track drawn over a blank page."""
+    assert deck_spec.get("mapProvider") == "carto"
+    assert deck_spec.get("mapStyle", "").startswith("https://basemaps.cartocdn.com/")
 
 
 def test_everything_the_user_can_point_at_is_pickable(deck_spec):
@@ -145,8 +153,8 @@ def _track_colours(spec):
 
 def test_dark_palette_produces_different_colours(synthetic_igc):
     metrics = analyse(load_igc(synthetic_igc))
-    light = json.loads(flight_deck(metrics, LIGHT, "OpenTopoMap").to_json())
-    dark = json.loads(flight_deck(metrics, DARK, "OpenTopoMap").to_json())
+    light = json.loads(flight_deck(metrics, LIGHT, "Clean (CARTO Positron)").to_json())
+    dark = json.loads(flight_deck(metrics, DARK, "Clean (CARTO Positron)").to_json())
     assert _track_colours(light) != _track_colours(dark)
 
 
@@ -158,12 +166,12 @@ def test_airspace_is_drawn_beneath_the_track(synthetic_igc):
 
     airspaces = load_openair(Path(__file__).parent / "fixtures" / "sample_airspace.txt")
     metrics = analyse(load_igc(synthetic_igc))
-    spec = json.loads(flight_deck(metrics, LIGHT, "OpenTopoMap", airspaces).to_json())
+    spec = json.loads(flight_deck(metrics, LIGHT, "Clean (CARTO Positron)", airspaces).to_json())
 
     types = [layer["@@type"] for layer in spec["layers"]]
     assert types.count("PolygonLayer") == 2  # airspace + turnpoint sectors
 
-    airspace_layer = spec["layers"][1]
+    airspace_layer = spec["layers"][0]
     assert airspace_layer["@@type"] == "PolygonLayer"
     assert len(airspace_layer["data"]) == sum(len(a.rings) for a in airspaces)
     track_index = max(i for i, layer in enumerate(spec["layers"]) if layer["@@type"] == "PathLayer")
@@ -177,7 +185,7 @@ def test_airspace_is_drawn_beneath_the_track(synthetic_igc):
 
 def test_no_airspace_means_no_airspace_layer(synthetic_igc):
     metrics = analyse(load_igc(synthetic_igc))
-    spec = json.loads(flight_deck(metrics, LIGHT, "OpenTopoMap", []).to_json())
+    spec = json.loads(flight_deck(metrics, LIGHT, "Clean (CARTO Positron)", []).to_json())
     assert [layer["@@type"] for layer in spec["layers"]].count("PolygonLayer") == 1
 
 

@@ -13,7 +13,7 @@ import math
 import pydeck as pdk
 from pyproj import Geod
 
-from debrief.app.theme import TILE_SOURCES, Palette, airspace_family
+from debrief.app.theme import Palette, airspace_family, basemap_style
 from debrief.core.airspace import Airspace
 from debrief.core.metrics import FlightMetrics, fix_altitude
 from debrief.core.models import Fix, TaskDef
@@ -268,22 +268,11 @@ def _track_layers(
 def flight_deck(
     metrics: FlightMetrics,
     palette: Palette,
-    tile_source: str,
+    basemap: str,
     airspaces: list[Airspace] | None = None,
 ) -> pdk.Deck:
-    """Build the map: base tiles, airspace, declared task, flown track."""
-    source = TILE_SOURCES[tile_source]
-
-    layers: list[pdk.Layer] = [
-        pdk.Layer(
-            "TileLayer",
-            data=source["url"],
-            min_zoom=0,
-            max_zoom=19,
-            tile_size=256,
-            opacity=0.85,
-        )
-    ]
+    """Build the map: basemap, airspace, declared task, flown track."""
+    layers: list[pdk.Layer] = []
     # Order is paint order: airspace under the task, task under the track, so
     # the flight is never hidden by what it was flying through.
     if airspaces:
@@ -295,8 +284,10 @@ def flight_deck(
     return pdk.Deck(
         layers=layers,
         initial_view_state=_view_state(metrics.flight.trace),
-        # The base map is the TileLayer above, so deck.gl's own basemap is off;
-        # this also avoids needing a Mapbox token.
-        map_provider=None,
+        # The basemap is the map's own style, not a layer. map_provider="carto"
+        # selects a keyless provider; map_provider=None switches the basemap off
+        # entirely, which is what left the track floating on a blank page.
+        map_provider="carto",
+        map_style=basemap_style(basemap),
         tooltip=TOOLTIP,
     )
