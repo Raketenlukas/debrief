@@ -159,22 +159,28 @@ def climb_profile(metrics: FlightMetrics, palette: Palette, height: int = 300) -
     """One bar per thermal: when it happened, how long it lasted, how well it went."""
     figure = go.Figure()
 
-    for leg in metrics.legs:
-        if not leg.thermals:
+    # Without a task there are no legs to colour by, so the climbs form one
+    # series. Grouping by leg is the only thing a task adds to this chart.
+    groups: list[tuple[str, tuple, str]] = (
+        [(leg.label, leg.thermals, palette.leg_color(leg.index)) for leg in metrics.legs]
+        if metrics.legs
+        else [("Climbs", metrics.thermals, palette.leg_color(0))]
+    )
+
+    for label, thermals, color in groups:
+        if not thermals:
             continue
-        color = palette.leg_color(leg.index)
         figure.add_trace(
             go.Bar(
                 # Bars are centred on the middle of the climb and as wide as its
                 # duration, so position and width both carry meaning.
-                x=[t.start_time + (t.end_time - t.start_time) / 2 for t in leg.thermals],
-                y=[t.average_climb_ms for t in leg.thermals],
-                width=[t.duration_s * 1000 for t in leg.thermals],
-                name=leg.label,
+                x=[t.start_time + (t.end_time - t.start_time) / 2 for t in thermals],
+                y=[t.average_climb_ms for t in thermals],
+                width=[t.duration_s * 1000 for t in thermals],
+                name=label,
                 marker=dict(color=color, line=dict(width=0)),
                 customdata=[
-                    (t.duration_s / 60.0, t.height_gain, t.entry_altitude, t.exit_altitude)
-                    for t in leg.thermals
+                    (t.duration_s / 60.0, t.height_gain, t.entry_altitude, t.exit_altitude) for t in thermals
                 ],
                 hovertemplate=(
                     "%{x|%H:%M} · <b>%{y:.2f} m/s</b><br>"
@@ -196,6 +202,7 @@ def climb_profile(metrics: FlightMetrics, palette: Palette, height: int = 300) -
 
     layout = _base_layout(palette, "Climbs", height)
     layout["bargap"] = 0.0
+    layout["showlegend"] = len(groups) > 1
     layout["yaxis"]["title"] = dict(text="Climb rate (m/s)", font=dict(color=palette.ink_secondary))
     figure.update_layout(**layout)
     return figure

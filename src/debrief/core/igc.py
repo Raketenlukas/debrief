@@ -12,6 +12,8 @@ self-describing and no separate task fetch is needed. Files without those lines
 from __future__ import annotations
 
 import datetime as dt
+import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,8 @@ from debrief.core.models import (
     TaskDef,
     TaskPoint,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class IGCError(ValueError):
@@ -106,6 +110,123 @@ def to_opensoar_task(task: TaskDef, start_time_buffer: int = 0) -> RaceTask | AA
     return RaceTask(waypoints, task.timezone_hours, task.start_opening, start_time_buffer)
 
 
+# Observation zones assumed when a task comes from standard IGC C records,
+# which carry no sector geometry. These are the common competition defaults
+# (and match what the SoaringSpot files in this project actually declare):
+# a 5 km start line, 500 m turnpoint cylinders, a 3 km finish ring.
+ASSUMED_START_RADIUS = 5000.0
+ASSUMED_TURNPOINT_RADIUS = 500.0
+ASSUMED_FINISH_RADIUS = 3000.0
+
+
+# When sectors are assumed rather than declared, one that is smaller than the
+# real thing is never entered, and a completed task reads as an outlanding.
+# These are tried in order, widening until the task completes. Declared
+# geometry is never widened — there is nothing to guess.
+ASSUMED_SECTOR_LADDER: tuple[tuple[float, float, float], ...] = (
+    (ASSUMED_START_RADIUS, ASSUMED_TURNPOINT_RADIUS, ASSUMED_FINISH_RADIUS),
+    (5000.0, 1000.0, 5000.0),
+    (10000.0, 3000.0, 10000.0),
+)
+
+
+def with_assumed_sectors(
+    task: TaskDef, start_radius: float, turnpoint_radius: float, finish_radius: float
+) -> TaskDef:
+    """A copy of ``task`` with its observation zones resized.
+
+    Only meaningful for a task whose geometry was assumed; resizing a declared
+    task would be inventing a different task.
+    """
+    last = len(task.points) - 1
+    points = []
+    for index, point in enumerate(task.points):
+        if index == 0:
+            radius = start_radius
+        elif index == last:
+            radius = finish_radius
+        else:
+            radius = turnpoint_radius
+        points.append(replace(point, r_max=radius))
+    return replace(task, points=tuple(points))
+
+
+def _is_placeholder(waypoint: dict) -> bool:
+    """IGC writes 0/0 for an unspecified takeoff or landing point."""
+    return waypoint["latitude"] == 0.0 and waypoint["longitude"] == 0.0
+
+
+def task_from_c_records(
+    declaration: dict,
+    start_radius: float = ASSUMED_START_RADIUS,
+    turnpoint_radius: float = ASSUMED_TURNPOINT_RADIUS,
+    finish_radius: float = ASSUMED_FINISH_RADIUS,
+) -> TaskDef | None:
+    """Rebuild a task from standard IGC ``C`` records.
+
+    Most files declare their task this way; the ``LCU::C``/``LSEEYOU OZ``
+    comment lines that :func:`load_igc` prefers are a SoaringSpot/SeeYou
+    addition. Reading only those makes an ordinary competition file look like
+    it has no task at all.
+
+    The cost is that C records carry no observation zones, so the sectors are
+    defaults and the task is marked ``geometry_assumed``. Sector size decides
+    when a turnpoint counts as rounded, so a default that is *smaller* than the
+    declared one can turn a completed task into a phantom outlanding — hence
+    the radii are parameters, and :func:`debrief.core.metrics.analyse` warns
+    when an assumed-geometry task comes out as an outlanding.
+    """
+    waypoints = list(declaration.get("waypoints") or [])
+    if not waypoints:
+        return None
+
+    # A record brackets the task with takeoff and landing points, which are
+    # 0/0 when unspecified.
+    while waypoints and _is_placeholder(waypoints[0]):
+        waypoints.pop(0)
+    while waypoints and _is_placeholder(waypoints[-1]):
+        waypoints.pop()
+
+    expected = (declaration.get("num_turnpoints") or 0) + 2  # + start and finish
+    if expected >= 3 and len(waypoints) == expected + 2:
+        # Takeoff and landing were given explicitly rather than as 0/0.
+        waypoints = waypoints[1:-1]
+    if len(waypoints) < 3:
+        return None
+    if expected >= 3 and len(waypoints) != expected:
+        # The declaration does not line up with its own turnpoint count. Better
+        # to report no task than to silently score the wrong one.
+        logger.warning(
+            "C record declares %d turnpoints but yields %d task points; ignoring",
+            declaration.get("num_turnpoints"),
+            len(waypoints),
+        )
+        return None
+
+    last = len(waypoints) - 1
+    points = []
+    for index, waypoint in enumerate(waypoints):
+        if index == 0:
+            radius, is_line, orientation = start_radius, True, "next"
+        elif index == last:
+            radius, is_line, orientation = finish_radius, False, "previous"
+        else:
+            radius, is_line, orientation = turnpoint_radius, False, "symmetrical"
+        points.append(
+            TaskPoint(
+                name=(waypoint.get("description") or f"TP{index}").strip() or f"TP{index}",
+                latitude=waypoint["latitude"],
+                longitude=waypoint["longitude"],
+                r_max=radius,
+                angle_max=180,
+                is_line=is_line,
+                sector_orientation=orientation,
+            )
+        )
+
+    return TaskDef(points=tuple(points), task_type="race", geometry_assumed=True)
+
+
 def _flight_date(parsed: dict[str, Any], trace: list[dict[str, Any]]) -> dt.date:
     header = parsed.get("header", [[], {}])[1]
     date = header.get("utc_date")
@@ -142,6 +263,14 @@ def load_igc(
 
     date = _flight_date(parsed, trace)
     task, contest_info, competitor_info = get_info_from_comment_lines(parsed, date, start_time_buffer)
+    task_def = _task_to_def(task)
+
+    if task_def is None:
+        # No SoaringSpot comment lines. Fall back to the standard C record
+        # declaration, which is how most loggers write a task.
+        declaration_errors, declaration = parsed.get("task", ([], {}))
+        if not declaration_errors:
+            task_def = task_from_c_records(declaration)
 
     header = parsed.get("header", [[], {}])[1]
     pilot = Pilot(
@@ -164,7 +293,7 @@ def load_igc(
         trace=trace,
         pilot=pilot,
         date=date,
-        task=_task_to_def(task),
+        task=task_def,
         source=FlightSource(
             kind="local",
             reference=str(path.resolve()),

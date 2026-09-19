@@ -89,6 +89,12 @@ class TaskDef:
     t_min: dt.timedelta | None = None
     start_opening: dt.datetime | None = None
     timezone_hours: int | None = None
+    # True when the observation zones are defaults rather than the ones the
+    # pilot declared. Standard IGC C records carry only coordinates and names,
+    # so a task recovered from them has assumed sector sizes — which changes
+    # turnpoint rounding times, and therefore leg times and speeds. Anything
+    # showing scored numbers has to say so.
+    geometry_assumed: bool = False
 
     @property
     def key(self) -> str:

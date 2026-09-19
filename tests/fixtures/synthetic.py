@@ -200,7 +200,14 @@ def fly_task(
         leg_climb = climb_rate * (1.0 - 0.08 * (index - 1))
         leg_band_high = band_high - 60.0 * (index - 1)
         guard = 0
-        while glider.distance_to(target.lat, target.lon) > target.radius * 0.6:
+        # Turnpoints get rounded closely - a flight that only grazes a 3 km
+        # sector would miss a 500 m one entirely - but the task ends the moment
+        # the finish ring is crossed, which on a big ring is kilometres short of
+        # the finish point. That asymmetry is what exposes an assumed finish
+        # sector that is smaller than the declared one.
+        is_finish = index == len(task) - 1
+        arrival = target.radius * 0.95 if is_finish else min(target.radius * 0.6, 250.0)
+        while glider.distance_to(target.lat, target.lon) > arrival:
             guard += 1
             if guard > 20000:  # pragma: no cover - would mean the sim diverged
                 raise RuntimeError(f"failed to reach {target.name}")
@@ -225,9 +232,25 @@ def build_igc(
     competition_id: str = "7L",
     competition_class: str = "18m",
     timezone_hours: int = 2,
+    dialect: str = "soaringspot",
     **fly_kwargs,
 ) -> str:
-    """Build a complete SoaringSpot-flavoured IGC file as text."""
+    """Build a complete IGC file as text.
+
+    ``dialect`` selects how the task is declared:
+
+    ``soaringspot``
+        ``LCU::C`` / ``LSEEYOU OZ`` comment lines, which carry full sector
+        geometry. This is what SoaringSpot and SeeYou write.
+    ``igc``
+        standard ``C`` records only — coordinates and names, no sectors. This
+        is how most loggers declare a task, and a file like this used to read
+        as having no task at all.
+    ``both``
+        C records and comment lines, as the real competition files carry.
+    """
+    if dialect not in {"soaringspot", "igc", "both"}:
+        raise ValueError(f"unknown dialect {dialect!r}")
     fixes = fly_task(task=task, date=date, **fly_kwargs)
 
     lines: list[str] = [
@@ -247,22 +270,32 @@ def build_igc(
         f"LCU::HPTZNTIMEZONE:{timezone_hours}",
     ]
 
-    # Declaration. opensoar reads lcu_lines[2:-1] as the task, so the two leading
-    # records (C header, takeoff) and the trailing landing record are required
-    # padding, not decoration.
-    lines.append(f"LCU::C{date:%d%m%y}000000{date:%d%m%y}0001{len(task) - 2:02d}")
-    lines.append("LCU::C0000000N00000000ETAKEOFF")
-    for point in task:
-        lines.append(f"LCU::C{format_lat(point.lat)}{format_lon(point.lon)}{point.name}")
-    lines.append("LCU::C0000000N00000000ELANDING")
+    # Standard IGC declaration: a header record, then takeoff, the task points,
+    # and landing. Unspecified takeoff/landing points are written as 0/0.
+    if dialect in {"igc", "both"}:
+        lines.append(f"C{date:%d%m%y}120000{date:%d%m%y}0000{len(task) - 2:02d}")
+        lines.append("C0000000N00000000E")
+        for point in task:
+            lines.append(f"C{format_lat(point.lat)}{format_lon(point.lon)}{point.name}")
+        lines.append("C0000000N00000000E")
 
-    # Observation zones. OZ=-1 is the start, then 0..n-2 for the rest; Style is
-    # ignored for start and finish by opensoar, which always treats them as
-    # 'next' and 'previous'.
-    for index, point in enumerate(task):
-        oz = index - 1
-        style = 2 if index == 0 else (3 if index == len(task) - 1 else 1)
-        lines.append(f"LSEEYOU OZ={oz},Style={style},R1={int(point.radius)}m,A1=180")
+    # SoaringSpot's own copy. opensoar reads lcu_lines[2:-1] as the task, so the
+    # two leading records (C header, takeoff) and the trailing landing record
+    # are required padding, not decoration.
+    if dialect in {"soaringspot", "both"}:
+        lines.append(f"LCU::C{date:%d%m%y}000000{date:%d%m%y}0001{len(task) - 2:02d}")
+        lines.append("LCU::C0000000N00000000ETAKEOFF")
+        for point in task:
+            lines.append(f"LCU::C{format_lat(point.lat)}{format_lon(point.lon)}{point.name}")
+        lines.append("LCU::C0000000N00000000ELANDING")
+
+        # Observation zones. OZ=-1 is the start, then 0..n-2 for the rest; Style
+        # is ignored for start and finish by opensoar, which always treats them
+        # as 'next' and 'previous'.
+        for index, point in enumerate(task):
+            oz = index - 1
+            style = 2 if index == 0 else (3 if index == len(task) - 1 else 1)
+            lines.append(f"LSEEYOU OZ={oz},Style={style},R1={int(point.radius)}m,A1=180")
 
     for when, lat, lon, alt in fixes:
         lines.append(b_record(when, lat, lon, int(round(alt))))

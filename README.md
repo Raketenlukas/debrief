@@ -50,9 +50,24 @@ upload one in the app's sidebar.
 
 ## What it measures
 
-Everything comes from the IGC file alone. Competition files from SoaringSpot carry
-the task declaration in their `LCU::C` / `LSEEYOU OZ` comment lines, so no separate
-task download is needed — each file is self-describing.
+Everything comes from the IGC file alone.
+
+The task is read from whichever declaration the file carries. SoaringSpot and
+SeeYou write `LCU::C` / `LSEEYOU OZ` comment lines, which include the observation
+zones; those are preferred. Failing that, the standard IGC `C` records are used —
+that is how most loggers declare a task, and reading only the comment lines made
+ordinary competition files look like they had no task at all.
+
+`C` records carry coordinates and names but **no sector geometry**, so such a task
+is marked `geometry_assumed` and every view says so. Sector size decides when a
+turnpoint counts as rounded, so an assumed sector smaller than the declared one is
+never entered and a completed task reads as an outlanding. When that happens the
+zones are widened and retried, and the analysis reports which sizes it had to use.
+
+A flight with **no task at all** still opens. Thermals, climb rates, circling
+share, cruise speed, achieved glide and the altitude band do not depend on a task;
+only the task-shaped numbers are absent, and they are absent rather than zeroed.
+Use `analyse_or_summarise()` for "just show me this flight".
 
 Four metric families, per leg and for the whole flight:
 

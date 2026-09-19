@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from debrief.core.igc import IGCError, load_igc
-from debrief.core.metrics import FlightMetrics, analyse
+from debrief.core.metrics import FlightMetrics, analyse_or_summarise
 
 
 def _duration(seconds: float | None) -> str:
@@ -29,19 +29,41 @@ def render(metrics: FlightMetrics) -> str:
     flight = metrics.flight
     lines = [
         f"{flight.pilot.label}  ·  {flight.date:%Y-%m-%d}  ·  {flight.pilot.glider_model or '?'}",
-        f"Task: {metrics.task.label}  ({metrics.task.task_type}, {metrics.task.n_legs} legs)",
-        "",
-        f"  {metrics.task_distance_km:.1f} km in {_duration(metrics.task_duration_s)}"
-        f"  ->  {_num(metrics.task_speed_kmh)} km/h",
+    ]
+    if metrics.task is not None:
+        lines.append(
+            f"Task: {metrics.task.label}  ({metrics.task.task_type}, {metrics.task.n_legs} legs"
+            + (", sectors assumed)" if metrics.task.geometry_assumed else ")")
+        )
+        lines += [
+            "",
+            f"  {metrics.task_distance_km:.1f} km in {_duration(metrics.task_duration_s)}"
+            f"  ->  {_num(metrics.task_speed_kmh)} km/h",
+        ]
+    else:
+        lines += [
+            "Free flight - no declared task",
+            "",
+            f"  {metrics.distance_flown_km:.1f} km flown in {_duration(metrics.task_duration_s)}",
+        ]
+    lines += [
         f"  Climb    {_num(metrics.average_climb_ms, '.2f')} m/s over {metrics.thermal_count}"
         f" thermals, circling {_num(metrics.percent_circling, '.0f')}%",
         f"  Cruise   {_num(metrics.cruise_speed_kmh, '.0f')} km/h at L/D"
         f" {_num(metrics.glide_ratio)}, detour {_num(metrics.detour_percent, '+.1f')}%",
-        f"  Final glide {_num(metrics.final_glide_km)} km for {_num(metrics.final_glide_height, '.0f')} m",
-        "",
-        f"  {'Leg':26s} {'km':>6s} {'time':>8s} {'km/h':>6s} {'th':>3s}"
-        f" {'m/s':>5s} {'circ%':>6s} {'L/D':>5s} {'det%':>6s}",
     ]
+    # Both of these are task concepts: a free flight has no final glide and no
+    # legs, and printing empty headings for them is noise, not information.
+    if metrics.has_task:
+        lines.append(
+            f"  Final glide {_num(metrics.final_glide_km)} km for {_num(metrics.final_glide_height, '.0f')} m"
+        )
+    if metrics.legs:
+        lines += [
+            "",
+            f"  {'Leg':26s} {'km':>6s} {'time':>8s} {'km/h':>6s} {'th':>3s}"
+            f" {'m/s':>5s} {'circ%':>6s} {'L/D':>5s} {'det%':>6s}",
+        ]
     for leg in metrics.legs:
         lines.append(
             f"  {leg.label[:26]:26s} {leg.task_distance_km:6.1f} {_duration(leg.duration_s):>8s}"
@@ -72,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
             print()
         try:
             flight = load_igc(path, start_time_buffer=args.start_buffer)
-            print(render(analyse(flight, start_time_buffer=args.start_buffer)))
+            print(render(analyse_or_summarise(flight, start_time_buffer=args.start_buffer)))
         except (IGCError, ValueError) as exc:
             print(f"{path}: {exc}", file=sys.stderr)
             failures += 1

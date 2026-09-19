@@ -31,7 +31,7 @@ from debrief.app.theme import (  # noqa: E402
 )
 from debrief.core.airspace import Airspace, load_openair  # noqa: E402
 from debrief.core.igc import IGCError, load_igc  # noqa: E402
-from debrief.core.metrics import FlightMetrics, analyse  # noqa: E402
+from debrief.core.metrics import FlightMetrics, analyse_or_summarise  # noqa: E402
 from debrief.sources.local import LocalArchive  # noqa: E402
 
 DEFAULT_ARCHIVE = Path("data/igc")
@@ -55,7 +55,7 @@ def _duration(seconds: float | None) -> str:
 def _analyse_path(path: str, mtime: float) -> FlightMetrics:
     """Cache on (path, mtime) so editing a file busts the entry."""
     del mtime
-    return analyse(load_igc(path))
+    return analyse_or_summarise(load_igc(path))
 
 
 def _safe_upload_path(directory: Path, name: str, fallback: str) -> Path:
@@ -167,15 +167,24 @@ def _pick_flight() -> Path | None:
 def _header(metrics: FlightMetrics) -> None:
     flight = metrics.flight
     st.subheader(flight.pilot.label)
-    bits = [f"{flight.date:%d %B %Y}", metrics.task.label]
+    bits = [f"{flight.date:%d %B %Y}"]
+    if metrics.task is not None:
+        bits.append(metrics.task.label)
+    else:
+        bits.append("free flight — no declared task")
     if flight.pilot.glider_model:
         bits.insert(1, flight.pilot.glider_model)
     if flight.competition:
         bits.append(flight.competition.competition)
     st.caption(" · ".join(bits))
 
-    if metrics.outlanded:
+    if metrics.outlanded and metrics.task is not None:
         st.warning(f"Outlanding — {len(metrics.legs)} of {metrics.task.n_legs} legs flown.")
+    if metrics.task is not None and metrics.task.geometry_assumed:
+        st.info(
+            "This task came from the file's C records, which carry no observation "
+            "zones. Sector sizes are assumed, so leg times and speeds are approximate."
+        )
     for warning in metrics.warnings:
         if not warning.startswith("outlanded"):
             st.info(warning)
@@ -184,11 +193,19 @@ def _header(metrics: FlightMetrics) -> None:
 def _stat_tiles(metrics: FlightMetrics) -> None:
     """Headline numbers, one per metric family."""
     row1 = st.columns(4)
-    row1[0].metric("Task speed", _fmt(metrics.task_speed_kmh, ".1f", " km/h"))
-    row1[1].metric("Task distance", _fmt(metrics.task_distance_km, ".1f", " km"))
-    row1[2].metric("Time on task", _duration(metrics.task_duration_s))
+    if metrics.has_task:
+        row1[0].metric("Task speed", _fmt(metrics.task_speed_kmh, ".1f", " km/h"))
+        row1[1].metric("Task distance", _fmt(metrics.task_distance_km, ".1f", " km"))
+        row1[2].metric("Time on task", _duration(metrics.task_duration_s))
+    else:
+        # No task, so no task speed or task distance to report. Showing the
+        # track length instead is honest; calling it "distance" would not be.
+        row1[0].metric("Distance flown", _fmt(metrics.distance_flown_km, ".1f", " km"))
+        band = f"{metrics.overall.altitude_min:.0f}–{metrics.overall.altitude_max:.0f} m"
+        row1[1].metric("Altitude band", band)
+        row1[2].metric("Airborne", _duration(metrics.task_duration_s))
     row1[3].metric(
-        "Start",
+        "Start" if metrics.has_task else "Takeoff",
         f"{metrics.start_time:%H:%M}" if metrics.start_time else "—",
         _fmt(metrics.start_altitude, ".0f", " m"),
         delta_color="off",
@@ -293,8 +310,9 @@ def main() -> None:
     st.plotly_chart(barogram(metrics, palette), use_container_width=True)
     st.plotly_chart(climb_profile(metrics, palette), use_container_width=True)
 
-    st.markdown("#### Legs")
-    _leg_table(metrics)
+    if metrics.legs:
+        st.markdown("#### Legs")
+        _leg_table(metrics)
 
 
 main()
