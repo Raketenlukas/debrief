@@ -16,10 +16,22 @@ Needs **Python 3.11 or newer**. Check first — macOS still ships 3.9 as
 python3 -V
 ```
 
+If you already have a `.venv` and are not sure what is in it:
+
+```bash
+.venv/bin/python -V            # 3.11+
+.venv/bin/python -m pip -V     # 21.3+, or the editable install fails
+```
+
 Then, using only the standard library:
 
 ```bash
 python3 -m venv .venv
+# Required, not hygiene: this project builds with hatchling, and an editable
+# install of a non-setuptools backend needs pip >= 21.3 (PEP 660). The pip that
+# macOS seeds into a new venv is older and fails with "Directory cannot be
+# installed in editable mode".
+.venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e ".[dev]"
 
 # Generate a demo flight (a synthetic 311 km triangle) to try it on
