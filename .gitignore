@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# The IGC archive is your data, not the repo's. The demo flight is generated
+# (see the README), not committed — it is derived data.
+data/igc/*.igc
