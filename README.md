@@ -9,8 +9,18 @@ scoring and thermal detection.
 
 ## Quick start
 
+Needs **Python 3.11 or newer**. Check first — macOS still ships 3.9 as
+`python3`, which is too old:
+
 ```bash
-uv venv && uv pip install -e ".[dev]"
+python3 -V
+```
+
+Then, using only the standard library:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
 
 # Generate a demo flight (a synthetic 311 km triangle) to try it on
 .venv/bin/python tests/fixtures/synthetic.py data/igc/demo.igc
@@ -18,9 +28,22 @@ uv venv && uv pip install -e ".[dev]"
 # Command line
 .venv/bin/python -m debrief.cli data/igc/demo.igc
 
-# Web app
+# Web app -> http://127.0.0.1:8501
 .venv/bin/streamlit run src/debrief/app/main.py
 ```
+
+If `python3 -V` is older than 3.11, or you would rather not manage Python
+versions yourself, [uv](https://docs.astral.sh/uv/) downloads a suitable one
+for you and installs considerably faster:
+
+```bash
+brew install uv          # or: curl -LsSf https://astral.sh/uv/install.sh | sh
+uv venv --python 3.12 && uv pip install -e ".[dev]"
+```
+
+Either way the virtualenv lands in `.venv/` and the commands above are the
+same. There is no need to `activate` it — every command here calls the
+interpreter inside `.venv/` directly.
 
 Drop your own `.igc` files into `data/igc/` (any subdirectory layout works), or
 upload one in the app's sidebar.
