@@ -30,6 +30,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/debrief"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/debrief/app/replay_page.html" = "debrief/app/replay_page.html"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

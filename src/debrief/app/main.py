@@ -21,7 +21,7 @@ import streamlit as st
 if __package__ is None or __package__ == "":  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from debrief.app import day_view  # noqa: E402
+from debrief.app import day_view, replay  # noqa: E402
 from debrief.app.charts import barogram, climb_profile  # noqa: E402
 from debrief.app.maps import flight_deck  # noqa: E402
 from debrief.app.theme import (  # noqa: E402
@@ -401,10 +401,15 @@ def main() -> None:
     _header(metrics)
     _stat_tiles(metrics)
 
-    st.pydeck_chart(flight_deck(metrics, palette, basemap, airspaces), use_container_width=True)
-    st.caption("Drag to pan, scroll to zoom, hover the track or an airspace for detail.")
-    st.plotly_chart(barogram(metrics, palette), use_container_width=True)
-    st.plotly_chart(climb_profile(metrics, palette), use_container_width=True)
+    overview, replay_tab = st.tabs(["Overview", "Replay"])
+    with replay_tab:
+        replay.render([metrics], palette, basemap)
+
+    with overview:
+        st.pydeck_chart(flight_deck(metrics, palette, basemap, airspaces), use_container_width=True)
+        st.caption("Drag to pan, scroll to zoom, hover the track or an airspace for detail.")
+        st.plotly_chart(barogram(metrics, palette), use_container_width=True)
+        st.plotly_chart(climb_profile(metrics, palette), use_container_width=True)
 
     if metrics.legs:
         st.markdown("#### Legs")

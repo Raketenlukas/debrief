@@ -163,16 +163,21 @@ def airspace_family(airspace_class: str | None, airspace_type: str | None = None
 # The CARTO styles need no API key. Raster sources (terrain, satellite) are
 # wrapped in a minimal style document below.
 BASEMAPS: dict[str, dict[str, str]] = {
+    # The vector styles carry a raster equivalent too: the replay draws its own
+    # map on a canvas and cannot render vector tiles.
     "Clean (CARTO Positron)": {
         "style": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+        "raster": "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
         "attribution": "© OpenStreetMap contributors, © CARTO",
     },
     "Streets (CARTO Voyager)": {
         "style": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+        "raster": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
         "attribution": "© OpenStreetMap contributors, © CARTO",
     },
     "Dark (CARTO Dark Matter)": {
         "style": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+        "raster": "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
         "attribution": "© OpenStreetMap contributors, © CARTO",
     },
     "Terrain (OpenTopoMap)": {
@@ -220,6 +225,18 @@ def raster_style(url: str, attribution: str, background: str = "#e8eef5") -> str
         ],
     }
     return "data:application/json," + quote(json.dumps(style))
+
+
+def basemap_raster(name: str) -> str:
+    """The raster tile template for a basemap.
+
+    The replay draws its map on a canvas rather than through a map library, so
+    it needs image tiles. Every entry carries one, including the vector styles.
+    """
+    source = BASEMAPS.get(name)
+    if source is None or "raster" not in source:
+        return BASEMAPS[DEFAULT_BASEMAP]["raster"]
+    return source["raster"]
 
 
 def basemap_style(name: str) -> str:

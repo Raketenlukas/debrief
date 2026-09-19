@@ -1,0 +1,346 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --surface: __SURFACE__; --ink: __INK__; --muted: __MUTED__;
+    --grid: __GRID__; --axis: __AXIS__;
+  }
+  html, body { margin: 0; padding: 0; background: var(--surface); overflow: hidden; }
+  body { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); }
+  canvas { display: block; width: 100%; }
+  #map { height: 400px; cursor: grab; }
+  #map.dragging { cursor: grabbing; }
+  #bar { height: 190px; cursor: ew-resize; }
+  #controls { display: flex; align-items: center; gap: 8px; padding: 8px 2px; flex-wrap: wrap; }
+  button, select {
+    font: inherit; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--axis); border-radius: 6px; padding: 4px 10px; cursor: pointer;
+  }
+  button:hover, select:hover { border-color: var(--muted); }
+  #play { min-width: 76px; font-weight: 600; }
+  #clock { font-variant-numeric: tabular-nums; color: var(--muted); margin-left: auto; }
+  #legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 0 2px 6px; color: var(--muted); }
+  .key { display: inline-flex; align-items: center; gap: 5px; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  #attr { position: absolute; right: 4px; font-size: 10px; color: var(--muted);
+          background: var(--surface); padding: 0 4px; opacity: .8; }
+</style>
+
+<canvas id="map"></canvas>
+<div id="attr">__ATTRIBUTION__</div>
+<div id="controls">
+  <button id="play">Play</button>
+  <button id="dir" title="Playback direction">Forward ▶</button>
+  <select id="speed" title="Playback speed">
+    <option value="1">1×</option><option value="2">2×</option>
+    <option value="5" selected>5×</option><option value="10">10×</option>
+    <option value="20">20×</option>
+  </select>
+  <button id="home" title="Back to the beginning">⏮</button>
+  <button id="fit" title="Fit the map to the tracks">Fit</button>
+  <span id="clock"></span>
+</div>
+<div id="legend"></div>
+<canvas id="bar"></canvas>
+
+<script>
+"use strict";
+// No external libraries: the map and the barogram are drawn on canvas. That
+// keeps the replay working offline and, more to the point, makes it testable —
+// a CDN that cannot be reached from CI is code that ships unverified.
+const DATA = __PAYLOAD__;
+const P = __PALETTE__;
+const TILES = __TILES__;
+const TS = 256;                       // tile size
+const tracks = DATA.tracks;
+
+/* ---------- Web Mercator ---------------------------------------------- */
+function lon2x(lon, z) { return ((lon + 180) / 360) * TS * Math.pow(2, z); }
+function lat2y(lat, z) {
+  const s = Math.sin((lat * Math.PI) / 180);
+  return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * TS * Math.pow(2, z);
+}
+function x2lon(x, z) { return (x / (TS * Math.pow(2, z))) * 360 - 180; }
+function y2lat(y, z) {
+  const n = Math.PI - (2 * Math.PI * y) / (TS * Math.pow(2, z));
+  return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+}
+
+/* ---------- canvases --------------------------------------------------- */
+const mapC = document.getElementById("map"), mapX = mapC.getContext("2d");
+const barC = document.getElementById("bar"), barX = barC.getContext("2d");
+function sizeCanvas(c) {
+  const r = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * r; c.height = h * r;
+  c.getContext("2d").setTransform(r, 0, 0, r, 0, 0);
+  return {w, h};
+}
+let mapSize = sizeCanvas(mapC), barSize = sizeCanvas(barC);
+document.getElementById("attr").style.top = (mapSize.h - 14) + "px";
+
+/* ---------- view ------------------------------------------------------- */
+let zoom = 9, centre = {lon: 0, lat: 0};
+function fit() {
+  if (!DATA.bounds) return;
+  const [[w, s], [e, n]] = DATA.bounds;
+  centre = {lon: (w + e) / 2, lat: (s + n) / 2};
+  for (let z = 16; z >= 2; z--) {
+    const dx = Math.abs(lon2x(e, z) - lon2x(w, z));
+    const dy = Math.abs(lat2y(s, z) - lat2y(n, z));
+    if (dx < mapSize.w * 0.86 && dy < mapSize.h * 0.86) { zoom = z; break; }
+  }
+}
+fit();
+
+const toPx = (lon, lat) => ({
+  x: lon2x(lon, zoom) - lon2x(centre.lon, zoom) + mapSize.w / 2,
+  y: lat2y(lat, zoom) - lat2y(centre.lat, zoom) + mapSize.h / 2,
+});
+
+/* ---------- tiles ------------------------------------------------------ */
+const tileCache = new Map();
+function tile(z, x, y) {
+  const key = z + "/" + x + "/" + y;
+  if (tileCache.has(key)) return tileCache.get(key);
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = () => { img.ready = true; drawMap(); };
+  img.onerror = () => { img.failed = true; };
+  img.src = TILES.replace("{z}", z).replace("{x}", x).replace("{y}", y);
+  tileCache.set(key, img);
+  return img;
+}
+
+function drawTiles() {
+  const n = Math.pow(2, zoom);
+  const originX = lon2x(centre.lon, zoom) - mapSize.w / 2;
+  const originY = lat2y(centre.lat, zoom) - mapSize.h / 2;
+  const x0 = Math.floor(originX / TS), x1 = Math.floor((originX + mapSize.w) / TS);
+  const y0 = Math.floor(originY / TS), y1 = Math.floor((originY + mapSize.h) / TS);
+  for (let x = x0; x <= x1; x++) {
+    for (let y = y0; y <= y1; y++) {
+      if (y < 0 || y >= n) continue;
+      const img = tile(zoom, ((x % n) + n) % n, y);
+      if (img.ready) mapX.drawImage(img, x * TS - originX, y * TS - originY, TS, TS);
+    }
+  }
+}
+
+/* ---------- position lookup ------------------------------------------- */
+// Binary search then linear interpolation: samples are thinned, so the plane
+// must be placed between them or it visibly steps.
+function sample(track, t) {
+  const ts = track.t, last = ts.length - 1;
+  if (t <= ts[0]) return {lon: track.lon[0], lat: track.lat[0], alt: track.alt[0], on: false};
+  if (t >= ts[last]) return {lon: track.lon[last], lat: track.lat[last], alt: track.alt[last], on: false};
+  let lo = 0, hi = last;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (ts[m] <= t) lo = m; else hi = m; }
+  const f = (t - ts[lo]) / ((ts[hi] - ts[lo]) || 1);
+  return {
+    lon: track.lon[lo] + (track.lon[hi] - track.lon[lo]) * f,
+    lat: track.lat[lo] + (track.lat[hi] - track.lat[lo]) * f,
+    alt: Math.round(track.alt[lo] + (track.alt[hi] - track.alt[lo]) * f),
+    from: {lon: track.lon[lo], lat: track.lat[lo]},
+    to: {lon: track.lon[hi], lat: track.lat[hi]},
+    on: true,
+  };
+}
+
+function drawPlane(ctx, x, y, angle, colour) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(0, -10); ctx.lineTo(2.2, -2); ctx.lineTo(10, 1.5); ctx.lineTo(10, 3.5);
+  ctx.lineTo(2.2, 2); ctx.lineTo(1.4, 8); ctx.lineTo(4, 10); ctx.lineTo(4, 11.5);
+  ctx.lineTo(0, 10.5); ctx.lineTo(-4, 11.5); ctx.lineTo(-4, 10); ctx.lineTo(-1.4, 8);
+  ctx.lineTo(-2.2, 2); ctx.lineTo(-10, 3.5); ctx.lineTo(-10, 1.5); ctx.lineTo(-2.2, -2);
+  ctx.closePath();
+  ctx.fillStyle = colour;
+  ctx.strokeStyle = P.surface; ctx.lineWidth = 1.2;
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+function drawMap() {
+  mapX.fillStyle = P.surface;
+  mapX.fillRect(0, 0, mapSize.w, mapSize.h);
+  drawTiles();
+
+  tracks.forEach((track) => {
+    mapX.beginPath();
+    for (let i = 0; i < track.lon.length; i++) {
+      const p = toPx(track.lon[i], track.lat[i]);
+      i ? mapX.lineTo(p.x, p.y) : mapX.moveTo(p.x, p.y);
+    }
+    mapX.strokeStyle = track.color;
+    mapX.globalAlpha = 0.5; mapX.lineWidth = 2; mapX.stroke(); mapX.globalAlpha = 1;
+  });
+
+  tracks.forEach((track) => {
+    const s = sample(track, cursor);
+    const p = toPx(s.lon, s.lat);
+    let angle = 0;
+    if (s.from) {
+      const a = toPx(s.from.lon, s.from.lat), b = toPx(s.to.lon, s.to.lat);
+      angle = Math.atan2(b.x - a.x, -(b.y - a.y));
+    }
+    mapX.globalAlpha = s.on ? 1 : 0.3;
+    drawPlane(mapX, p.x, p.y, angle, track.color);
+    mapX.globalAlpha = 1;
+  });
+}
+
+/* ---------- barogram --------------------------------------------------- */
+const PAD = {l: 46, r: 10, t: 8, b: 24};
+let altMin = Infinity, altMax = -Infinity;
+tracks.forEach((t) => t.alt.forEach((a) => { if (a < altMin) altMin = a; if (a > altMax) altMax = a; }));
+if (!isFinite(altMin)) { altMin = 0; altMax = 1; }
+const altPad = Math.max((altMax - altMin) * 0.06, 20);
+altMin -= altPad; altMax += altPad;
+
+const t2px = (t) => PAD.l + ((t - DATA.t0) / ((DATA.t1 - DATA.t0) || 1)) * (barSize.w - PAD.l - PAD.r);
+const px2t = (x) => DATA.t0 + ((x - PAD.l) / ((barSize.w - PAD.l - PAD.r) || 1)) * (DATA.t1 - DATA.t0);
+const a2px = (a) => PAD.t + (1 - (a - altMin) / ((altMax - altMin) || 1)) * (barSize.h - PAD.t - PAD.b);
+
+function label(t) {
+  if (DATA.align === "start") {
+    const s = Math.max(0, Math.round(t));
+    return "+" + Math.floor(s / 3600) + ":" + String(Math.floor((s % 3600) / 60)).padStart(2, "0")
+           + ":" + String(s % 60).padStart(2, "0");
+  }
+  return new Date(t * 1000).toISOString().slice(11, 19) + "Z";
+}
+
+function drawBar() {
+  barX.fillStyle = P.surface;
+  barX.fillRect(0, 0, barSize.w, barSize.h);
+
+  // horizontal gridlines with altitude labels
+  barX.strokeStyle = P.grid; barX.fillStyle = P.muted;
+  barX.lineWidth = 1; barX.font = "11px system-ui, sans-serif"; barX.textAlign = "right";
+  const stepA = [100, 200, 250, 500, 1000, 2000].find((s) => (altMax - altMin) / s <= 6) || 5000;
+  for (let a = Math.ceil(altMin / stepA) * stepA; a < altMax; a += stepA) {
+    const y = a2px(a);
+    barX.beginPath(); barX.moveTo(PAD.l, y); barX.lineTo(barSize.w - PAD.r, y); barX.stroke();
+    barX.fillText(String(a), PAD.l - 6, y + 4);
+  }
+
+  // time ticks
+  barX.textAlign = "center";
+  const span = DATA.t1 - DATA.t0;
+  const stepT = [300, 600, 900, 1800, 3600, 7200].find((s) => span / s <= 8) || 10800;
+  for (let t = Math.ceil(DATA.t0 / stepT) * stepT; t <= DATA.t1; t += stepT) {
+    const x = t2px(t);
+    barX.strokeStyle = P.grid;
+    barX.beginPath(); barX.moveTo(x, PAD.t); barX.lineTo(x, barSize.h - PAD.b); barX.stroke();
+    barX.fillStyle = P.muted;
+    barX.fillText(label(t).slice(0, 5), x, barSize.h - PAD.b + 15);
+  }
+
+  tracks.forEach((track) => {
+    barX.beginPath();
+    for (let i = 0; i < track.t.length; i++) {
+      const x = t2px(track.t[i]), y = a2px(track.alt[i]);
+      i ? barX.lineTo(x, y) : barX.moveTo(x, y);
+    }
+    barX.strokeStyle = track.color; barX.lineWidth = 1.6; barX.stroke();
+  });
+
+  const cx = t2px(cursor);
+  barX.strokeStyle = P.ink; barX.lineWidth = 1.5;
+  barX.beginPath(); barX.moveTo(cx, PAD.t); barX.lineTo(cx, barSize.h - PAD.b); barX.stroke();
+
+  tracks.forEach((track) => {
+    const s = sample(track, cursor);
+    if (!s.on) return;
+    barX.beginPath(); barX.arc(cx, a2px(s.alt), 3.5, 0, Math.PI * 2);
+    barX.fillStyle = track.color; barX.fill();
+    barX.strokeStyle = P.surface; barX.lineWidth = 1.2; barX.stroke();
+  });
+}
+
+/* ---------- state ------------------------------------------------------ */
+let cursor = DATA.t0, playing = false, speed = 5, direction = 1, last = null;
+
+function render() {
+  drawMap(); drawBar();
+  const alts = tracks.map((t) => sample(t, cursor)).filter((s) => s.on).map((s) => s.alt);
+  document.getElementById("clock").textContent =
+    label(cursor) + (alts.length ? " · " + Math.min(...alts) + "–" + Math.max(...alts) + " m" : " · —");
+}
+
+function frame(now) {
+  if (!playing) { last = null; return; }
+  if (last !== null) {
+    cursor += ((now - last) / 1000) * speed * direction;
+    if (cursor >= DATA.t1) { cursor = DATA.t1; setPlaying(false); }
+    else if (cursor <= DATA.t0) { cursor = DATA.t0; setPlaying(false); }
+    render();
+  }
+  last = now;
+  if (playing) requestAnimationFrame(frame);
+}
+
+function setPlaying(v) {
+  playing = v;
+  document.getElementById("play").textContent = v ? "Pause" : "Play";
+  if (v) { last = null; requestAnimationFrame(frame); }
+}
+
+document.getElementById("play").onclick = () => setPlaying(!playing);
+document.getElementById("speed").onchange = (e) => { speed = Number(e.target.value); };
+document.getElementById("dir").onclick = (e) => {
+  direction = -direction;
+  e.target.textContent = direction > 0 ? "Forward ▶" : "◀ Backward";
+};
+document.getElementById("home").onclick = () => {
+  cursor = direction > 0 ? DATA.t0 : DATA.t1; render();
+};
+document.getElementById("fit").onclick = () => { fit(); render(); };
+
+/* ---------- drag to scrub ---------------------------------------------- */
+let scrubbing = false;
+function scrubTo(clientX) {
+  const r = barC.getBoundingClientRect();
+  cursor = Math.min(DATA.t1, Math.max(DATA.t0, px2t(clientX - r.left)));
+  render();
+}
+barC.addEventListener("mousedown", (e) => {
+  scrubbing = true; setPlaying(false); scrubTo(e.clientX); e.preventDefault();
+});
+window.addEventListener("mousemove", (e) => { if (scrubbing) scrubTo(e.clientX); });
+window.addEventListener("mouseup", () => { scrubbing = false; });
+
+/* ---------- pan and zoom the map --------------------------------------- */
+let panning = null;
+mapC.addEventListener("mousedown", (e) => {
+  panning = {x: e.clientX, y: e.clientY}; mapC.classList.add("dragging"); e.preventDefault();
+});
+window.addEventListener("mousemove", (e) => {
+  if (!panning) return;
+  const cx = lon2x(centre.lon, zoom) - (e.clientX - panning.x);
+  const cy = lat2y(centre.lat, zoom) - (e.clientY - panning.y);
+  centre = {lon: x2lon(cx, zoom), lat: y2lat(cy, zoom)};
+  panning = {x: e.clientX, y: e.clientY};
+  drawMap();
+});
+window.addEventListener("mouseup", () => { panning = null; mapC.classList.remove("dragging"); });
+mapC.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  zoom = Math.max(2, Math.min(16, zoom + (e.deltaY < 0 ? 1 : -1)));
+  drawMap();
+}, {passive: false});
+
+window.addEventListener("resize", () => {
+  mapSize = sizeCanvas(mapC); barSize = sizeCanvas(barC);
+  document.getElementById("attr").style.top = (mapSize.h - 14) + "px";
+  render();
+});
+
+document.getElementById("legend").innerHTML = tracks
+  .map((t) => '<span class="key"><span class="sw" style="background:' + t.color + '"></span>' + t.label + "</span>")
+  .join("");
+
+render();
+</script>

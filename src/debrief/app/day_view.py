@@ -7,6 +7,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from debrief.app import replay
 from debrief.app.charts import comparison_barogram, leg_delta_chart
 from debrief.app.maps import comparison_deck
 from debrief.app.theme import Palette
@@ -171,10 +172,15 @@ def render(archive_root: Path, palette: Palette, basemap: str, airspaces: list[A
     if day.task_label:
         st.caption(f"Task: {day.task_label}")
 
-    st.pydeck_chart(comparison_deck(day, palette, basemap, airspaces), use_container_width=True)
-    st.plotly_chart(comparison_barogram(day, palette, align=align), use_container_width=True)
-    if len(day.flights) > 1:
-        st.plotly_chart(leg_delta_chart(day, palette), use_container_width=True)
+    overview, replay_tab = st.tabs(["Overview", "Replay"])
+    with replay_tab:
+        replay.render(list(day.flights), palette, basemap, align=align)
+
+    with overview:
+        st.pydeck_chart(comparison_deck(day, palette, basemap, airspaces), use_container_width=True)
+        st.plotly_chart(comparison_barogram(day, palette, align=align), use_container_width=True)
+        if len(day.flights) > 1:
+            st.plotly_chart(leg_delta_chart(day, palette), use_container_width=True)
 
     st.markdown("#### Comparison")
     st.dataframe(_comparison_table(day), use_container_width=True, hide_index=True)

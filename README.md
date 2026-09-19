@@ -160,6 +160,24 @@ Either way, treat the raw IGC file as the durable asset: fetch once, store it wi
 its `source_url` and `fetched_at`, derive everything else locally. Page markup
 changes; your archive shouldn't have to.
 
+## Replay
+
+Both views have a **Replay** tab: a time cursor shared by a map and a barogram,
+with a plane per pilot, play/pause, 1×–20× speed, forward or backward, and
+drag anywhere on the barogram to scrub.
+
+It is a self-contained page embedded with `components.html`, and it uses **no
+external libraries** — the map and the chart are drawn on canvas. Two reasons.
+Streamlit re-runs the whole script on every interaction, so a slider-driven
+animation would re-render the deck and the chart on every frame: choppy at 1×,
+pointless at 20×, and unable to express dragging on a chart at all. And a
+library pulled from a CDN is code that cannot be verified where the CDN is
+unreachable, which is how an earlier map bug shipped unnoticed.
+
+The replay draws raster tiles, so every basemap carries a raster URL alongside
+its vector style. The plane's position is interpolated between samples, so
+thinning the trace sets payload size rather than smoothness.
+
 ## Comparing a day
 
 Switch the sidebar to **Compare a day** to put a field side by side over one
