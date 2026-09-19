@@ -32,7 +32,7 @@ def _base_layout(palette: Palette, title: str, height: int) -> dict:
     return dict(
         title=dict(text=title, font=dict(size=15, color=palette.ink_primary, family=_FONT)),
         height=height,
-        margin=dict(l=56, r=20, t=48, b=58),
+        margin=dict(l=56, r=20, t=64, b=58),
         paper_bgcolor=palette.surface,
         plot_bgcolor=palette.surface,
         font=dict(family=_FONT, size=12, color=palette.ink_secondary),
@@ -120,16 +120,28 @@ def barogram(metrics: FlightMetrics, palette: Palette, height: int = 380) -> go.
             )
         )
 
-    # Leg boundaries, directly labelled with the turnpoint reached.
+    # Leg boundaries, directly labelled with the turnpoint reached. Labels are
+    # staggered onto a second row when two turnpoints fall close together in
+    # time - a short run-in between the last turnpoint and the finish is normal,
+    # and on one row those two labels overprint each other.
+    task_seconds = sum(leg.duration_s for leg in metrics.legs) or 1.0
+    min_gap = 0.06 * task_seconds
+    previous_time = None
+    row = 0
     for leg in metrics.legs:
         figure.add_vline(x=leg.end_time, line=dict(color=palette.axis, width=1, dash="dot"))
         name = (
             metrics.task.points[leg.index + 1].name if leg.index + 1 < len(metrics.task.points) else "finish"
         )
+        close_to_previous = (
+            previous_time is not None and (leg.end_time - previous_time).total_seconds() < min_gap
+        )
+        row = 1 - row if close_to_previous else 0
+        previous_time = leg.end_time
         figure.add_annotation(
             x=leg.end_time,
             yref="paper",
-            y=1.0,
+            y=1.0 + 0.06 * row,
             text=name,
             showarrow=False,
             yanchor="bottom",

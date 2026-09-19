@@ -399,11 +399,15 @@ def _final_glide(
     if finish_fix is None or not legs:
         return None, None
 
-    last_thermals = legs[-1].thermals
-    if not last_thermals:
+    # Search every leg, not just the last one. On a real task the final leg is
+    # often a short run-in flown without a climb, so the last thermal frequently
+    # sits on an earlier leg — looking only at legs[-1] silently reports no final
+    # glide on exactly the flights where it matters most.
+    all_thermals = [thermal for leg in legs for thermal in leg.thermals]
+    if not all_thermals:
         return None, None
 
-    top_of_last_climb = last_thermals[-1]
+    top_of_last_climb = all_thermals[-1]
     glide_fixes = [
         f
         for phase in phases.cruises()

@@ -1,9 +1,16 @@
 """Chart palette and tile sources.
 
-Colours come from a validated categorical palette. Only the first three
-categorical slots are used, which is the set that clears the colour-blind
-separation checks under an all-pairs comparison — relevant here because leg
-colours appear together on a map and in a scatter, not just as adjacent bars.
+Colours come from a validated categorical palette, in a fixed slot order that is
+the colour-blind-safety mechanism rather than a cosmetic choice.
+
+Two pairlists matter. Bars and lines only ever place *adjacent* slots side by
+side, and all eight slots clear the separation gates on that pairlist. Marks
+compared against every other mark — scattered points, spatial paths on a map —
+need the stricter all-pairs gate, which only the first three slots clear. Hence
+``series`` (eight, for leg-coloured bars) and ``spatial_series`` (three).
+
+Three light-mode slots sit below 3:1 contrast on the light surface; the leg
+table is the required relief, so it is not optional UI.
 
 Dark mode is a selected set of steps for the dark surface, not an automatic
 inversion of the light one.
@@ -24,13 +31,23 @@ class Palette:
     grid: str
     axis: str
     series: tuple[str, ...]
+    spatial_series: tuple[str, ...]
+    overflow: str
     cruise: str
     thermal: str
     thermal_band: str
 
     def leg_color(self, index: int) -> str:
-        """Colour follows the leg, never its rank, so filtering never repaints."""
-        return self.series[index % len(self.series)]
+        """Colour follows the leg, never its rank, so filtering never repaints.
+
+        Slots are never cycled: a task with more legs than the palette has slots
+        would otherwise give two legs the same colour and silently make the
+        legend ambiguous. Legs past the last slot share one neutral instead,
+        which reads as "beyond the palette" rather than as a specific leg.
+        """
+        if index < len(self.series):
+            return self.series[index]
+        return self.overflow
 
 
 LIGHT = Palette(
@@ -41,7 +58,18 @@ LIGHT = Palette(
     ink_muted="#898781",
     grid="#e1e0d9",
     axis="#c3c2b7",
-    series=("#2a78d6", "#eb6834", "#1baf7a"),
+    series=(
+        "#2a78d6",  # blue
+        "#eb6834",  # orange
+        "#1baf7a",  # aqua
+        "#eda100",  # yellow
+        "#e87ba4",  # magenta
+        "#008300",  # green
+        "#4a3aa7",  # violet
+        "#e34948",  # red
+    ),
+    spatial_series=("#2a78d6", "#eb6834", "#1baf7a"),
+    overflow="#898781",
     cruise="#2a78d6",
     thermal="#eb6834",
     thermal_band="rgba(235, 104, 52, 0.13)",
@@ -55,7 +83,18 @@ DARK = Palette(
     ink_muted="#898781",
     grid="#2c2c2a",
     axis="#383835",
-    series=("#3987e5", "#d95926", "#199e70"),
+    series=(
+        "#3987e5",  # blue
+        "#d95926",  # orange
+        "#199e70",  # aqua
+        "#c98500",  # yellow
+        "#d55181",  # magenta
+        "#008300",  # green
+        "#9085e9",  # violet
+        "#e66767",  # red
+    ),
+    spatial_series=("#3987e5", "#d95926", "#199e70"),
+    overflow="#898781",
     cruise="#3987e5",
     thermal="#d95926",
     thermal_band="rgba(217, 89, 38, 0.18)",

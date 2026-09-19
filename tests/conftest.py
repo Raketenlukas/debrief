@@ -2,7 +2,7 @@ import datetime as dt
 
 import pytest
 
-from tests.fixtures.synthetic import DEFAULT_TASK, write_igc
+from tests.fixtures.synthetic import DEFAULT_TASK, SHORT_FINAL_LEG_TASK, write_igc
 
 
 @pytest.fixture(scope="session")
@@ -28,4 +28,16 @@ def second_pilot_igc(tmp_path_factory):
         cruise_speed=29.0,
         climb_rate=1.8,
     )
+    return path
+
+
+@pytest.fixture(scope="session")
+def short_final_leg_igc(tmp_path_factory):
+    """A task whose last leg is a short run-in, flown without a climb.
+
+    This is the ordinary shape of a real contest task, and the one that hid a
+    final-glide bug: the last thermal sits on an earlier leg.
+    """
+    path = tmp_path_factory.mktemp("igc") / "SF.igc"
+    write_igc(path, task=SHORT_FINAL_LEG_TASK)
     return path

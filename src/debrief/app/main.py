@@ -129,20 +129,32 @@ def _stat_tiles(metrics: FlightMetrics) -> None:
 
 def _leg_table(metrics: FlightMetrics) -> None:
     """The table view. It is also the relief for chart colours that sit below the
-    3:1 contrast floor on a light surface — every number is readable as text."""
+    3:1 contrast floor on a light surface - every number is readable as text.
+
+    Values are formatted as text so a genuinely absent measurement shows as an em
+    dash. Left as floats, a missing value renders as the literal "None", which
+    reads as a failure rather than as "this leg had no climb to measure" - and a
+    leg flown without circling, the usual final run-in, has exactly that.
+    """
+
+    def num(value: float | None, digits: int) -> str:
+        # `if value` would treat a legitimate 0.0 as missing; 0% circling on a
+        # pure glide leg is a real measurement, not an absent one.
+        return "\u2014" if value is None else f"{value:.{digits}f}"
+
     rows = [
         {
             "Leg": leg.label,
-            "km": round(leg.task_distance_km, 1),
+            "km": f"{leg.task_distance_km:.1f}",
             "Time": _duration(leg.duration_s),
-            "km/h": round(leg.speed_kmh, 1) if leg.speed_kmh else None,
-            "Thermals": leg.thermal_count,
-            "Climb m/s": round(leg.average_climb_ms, 2) if leg.average_climb_ms else None,
-            "Circling %": round(leg.percent_circling, 1) if leg.percent_circling else None,
-            "Cruise km/h": round(leg.cruise_speed_kmh, 1) if leg.cruise_speed_kmh else None,
-            "L/D": round(leg.glide_ratio, 1) if leg.glide_ratio else None,
-            "Detour %": round(leg.detour_percent, 1) if leg.detour_percent else None,
-            "Band m": f"{leg.altitude_min:.0f}–{leg.altitude_max:.0f}",
+            "km/h": num(leg.speed_kmh, 1),
+            "Thermals": str(leg.thermal_count),
+            "Climb m/s": num(leg.average_climb_ms, 2),
+            "Circling %": num(leg.percent_circling, 1),
+            "Cruise km/h": num(leg.cruise_speed_kmh, 1),
+            "L/D": num(leg.glide_ratio, 1),
+            "Detour %": num(leg.detour_percent, 1),
+            "Band m": f"{leg.altitude_min:.0f}\u2013{leg.altitude_max:.0f}",
         }
         for leg in metrics.legs
     ]

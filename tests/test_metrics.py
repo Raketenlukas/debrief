@@ -108,6 +108,31 @@ def test_slower_pilot_scores_a_lower_task_speed(synthetic_igc, second_pilot_igc)
     assert fast.task_distance_km == pytest.approx(slow.task_distance_km, rel=0.01)
 
 
+def test_final_glide_is_found_when_the_last_leg_has_no_climb(short_final_leg_igc):
+    """Regression: the final glide must be measured from the last climb anywhere
+    on the task, not only from a climb on the final leg.
+
+    Found on a real 401 km flight out of Rieti, where the last thermal was on
+    leg 6 of 7 and the 8 km run-in was pure glide. The old code looked only at
+    legs[-1].thermals, so it reported no final glide at all — on precisely the
+    flights where the final glide is the interesting part.
+    """
+    metrics = analyse(load_igc(short_final_leg_igc))
+
+    assert metrics.legs[-1].thermal_count == 0, "fixture no longer exercises the bug"
+    assert any(leg.thermal_count for leg in metrics.legs[:-1])
+
+    assert metrics.final_glide_km is not None
+    assert metrics.final_glide_height is not None
+    assert metrics.final_glide_km > metrics.legs[-1].task_distance_km, (
+        "the glide must extend back past the final turnpoint into the previous leg"
+    )
+    # Height must be lost, and the implied glide ratio has to be physical.
+    assert metrics.final_glide_height > 0
+    implied = metrics.final_glide_km * 1000.0 / metrics.final_glide_height
+    assert 15 < implied < 60
+
+
 def test_flight_without_a_task_cannot_be_analysed(tmp_path, synthetic_igc):
     stripped = tmp_path / "notask.igc"
     stripped.write_text(

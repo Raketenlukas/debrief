@@ -42,6 +42,18 @@ DEFAULT_TASK = (
     TaskPointSpec("KLIXFIN", 51.2917, 14.5167, radius=3000.0),
 )
 
+# The same triangle with a turnpoint shortly before home, so the last leg is a
+# short run-in flown without a climb. Real contest tasks look like this far more
+# often than DEFAULT_TASK does, and it is the shape that exposed a final-glide
+# bug: the last thermal sits on an earlier leg.
+SHORT_FINAL_LEG_TASK = (
+    TaskPointSpec("KLIX", 51.2917, 14.5167, radius=5000.0),
+    TaskPointSpec("JUETERBOG", 52.1000, 13.0500, radius=3000.0),
+    TaskPointSpec("RIESA", 51.3000, 13.3000, radius=3000.0),
+    TaskPointSpec("NEARHOME", 51.2917, 14.2600, radius=3000.0),
+    TaskPointSpec("KLIXFIN", 51.2917, 14.5167, radius=3000.0),
+)
+
 
 def _dm(value: float, deg_width: int) -> tuple[int, int, int]:
     """Split a signed decimal degree into degrees, minutes, thousandths of minutes."""
@@ -143,6 +155,14 @@ def _offset(lat: float, lon: float, bearing: float, distance: float) -> tuple[fl
     return lat2, lon2
 
 
+def _distance_home(glider: _Glider, task: tuple[TaskPointSpec, ...], next_index: int) -> float:
+    """Track distance still to fly: to the next turnpoint, then around the rest."""
+    remaining = glider.distance_to(task[next_index].lat, task[next_index].lon)
+    for first, second in zip(task[next_index:-1], task[next_index + 1 :], strict=True):
+        remaining += GEOD.inv(first.lon, first.lat, second.lon, second.lat)[2]
+    return remaining
+
+
 def fly_task(
     task: tuple[TaskPointSpec, ...] = DEFAULT_TASK,
     date: dt.date = dt.date(2024, 6, 15),
@@ -152,6 +172,7 @@ def fly_task(
     climb_rate: float = 2.2,
     band_low: float = 1100.0,
     band_high: float = 2000.0,
+    finish_margin: float = 200.0,
     step: int = 2,
 ) -> list[tuple[dt.datetime, float, float, float]]:
     """Fly the task and return the raw fixes.
@@ -162,6 +183,7 @@ def fly_task(
     utc = dt.UTC
     begin = dt.datetime.combine(date, start_time, tzinfo=utc)
     start_point = task[0]
+    glide_ratio = cruise_speed / cruise_sink
 
     # Begin inside the start cylinder, pointing away from the first turnpoint, so
     # the trace genuinely crosses the start rather than beginning on it.
@@ -182,7 +204,12 @@ def fly_task(
             guard += 1
             if guard > 20000:  # pragma: no cover - would mean the sim diverged
                 raise RuntimeError(f"failed to reach {target.name}")
-            if glider.alt <= band_low:
+            # Stop climbing once home is within glide: a pilot on final glide does
+            # not take another thermal. This is what leaves the last leg of a
+            # short run-in with no climb at all, which is the normal shape of a
+            # real task and the case a naive final-glide calculation misses.
+            on_final_glide = _distance_home(glider, task, index) <= (glider.alt - finish_margin) * glide_ratio
+            if glider.alt <= band_low and not on_final_glide:
                 glider.thermal(leg_climb, leg_band_high)
             glider.cruise_toward(target.lat, target.lon, cruise_speed, cruise_sink)
 
