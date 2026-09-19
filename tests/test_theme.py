@@ -48,14 +48,31 @@ def test_every_basemap_resolves_to_a_style():
     for name, source in BASEMAPS.items():
         assert source["attribution"].strip(), name
         style = basemap_style(name)
-        if "raster" in source:
-            # A raster source is wrapped in a style document, carried inline.
-            assert style.startswith("data:application/json,"), name
-            assert "{z}" in source["raster"], name
-            assert "%7B%22version%22%3A%208" in style, name  # {"version": 8
+        if "style" in source:
+            # A hosted vector style is used as-is, and wins when both exist.
+            assert style == source["style"], name
+            assert style.startswith("https://") and style.endswith("style.json"), name
         else:
-            assert style.startswith("https://"), name
-            assert style.endswith("style.json"), name
+            # A raster-only source is wrapped in a style document, carried inline.
+            assert style.startswith("data:application/json,"), name
+            assert "%7B%22version%22%3A%208" in style, name  # {"version": 8
+
+
+def test_every_basemap_also_offers_raster_tiles():
+    """The replay draws its own map on a canvas, so it needs image tiles — a
+    vector style is no use to it."""
+    from debrief.app.theme import basemap_raster
+
+    for name in BASEMAPS:
+        raster = basemap_raster(name)
+        assert raster.startswith("https://"), name
+        assert all(token in raster for token in ("{z}", "{x}", "{y}")), name
+
+
+def test_an_unknown_basemap_falls_back_rather_than_raising_in_the_replay():
+    from debrief.app.theme import basemap_raster
+
+    assert basemap_raster("no such map") == BASEMAPS[DEFAULT_BASEMAP]["raster"]
 
 
 def test_raster_basemaps_keep_their_attribution_in_the_style():
