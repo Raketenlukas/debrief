@@ -185,6 +185,8 @@ def _soaringspot_import() -> None:
 
         try:
             day = SoaringSpotDay(url, DEFAULT_ARCHIVE, include_hc_competitors=include_hc)
+            if day.url_note:
+                st.caption(day.url_note)
             paths = day.download(progress=on_progress)
         except SoaringSpotError as exc:
             progress.empty()

@@ -37,6 +37,41 @@ class SoaringSpotError(RuntimeError):
     """Raised when a day cannot be imported."""
 
 
+# SoaringSpot shows a day's results under tabs: "daily" has each competitor's
+# flight, "total" has the cumulative standings. Only the daily page carries the
+# per-flight IGC links, so a total URL is switched over rather than failing.
+RESULTS_TABS = {"daily", "total"}
+
+
+def normalise_daily_url(url: str) -> tuple[str, str | None]:
+    """Point a results URL at the daily tab. Returns (url, note-if-changed).
+
+    Copying the URL from the browser usually lands on whichever tab was open,
+    and "total" is a common one to be reading. Silently scraping the wrong page
+    would just find no flights.
+    """
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) < 5 or parts[2] != "results":
+        return url, None
+
+    if len(parts) == 5:
+        parts.append("daily")
+        note = "no results tab in the URL; using the daily page"
+    elif parts[5] != "daily":
+        was = parts[5]
+        parts[5] = "daily"
+        note = (
+            f"switched from the {was!r} tab to 'daily': only the daily page "
+            "carries each competitor's IGC link"
+        )
+    else:
+        return url, None
+
+    rebuilt = parsed._replace(path="/" + "/".join(parts)).geturl()
+    return rebuilt, note
+
+
 def parse_daily_url(url: str) -> tuple[str, str, dt.date]:
     """Pull competition, class and date out of a daily results URL.
 
@@ -74,10 +109,10 @@ class SoaringSpotDay(FlightSourceBase):
         archive_root: str | Path,
         include_hc_competitors: bool = True,
     ):
-        self.url = url
+        self.url, self.url_note = normalise_daily_url(url)
         self.archive_root = Path(archive_root)
         self.include_hc_competitors = include_hc_competitors
-        self.competition, self.plane_class, self.date = parse_daily_url(url)
+        self.competition, self.plane_class, self.date = parse_daily_url(self.url)
 
     @property
     def name(self) -> str:

@@ -16,7 +16,12 @@ import datetime as dt
 import pytest
 
 from debrief.core.metrics import analyse_or_summarise
-from debrief.sources.soaringspot import SoaringSpotDay, SoaringSpotError, parse_daily_url
+from debrief.sources.soaringspot import (
+    SoaringSpotDay,
+    SoaringSpotError,
+    normalise_daily_url,
+    parse_daily_url,
+)
 from tests.fixtures.fake_soaringspot import DEFAULT_COMPETITORS, FakeSoaringSpot
 
 
@@ -131,3 +136,57 @@ def test_download_returns_a_sized_sequence(server, tmp_path):
     assert all(p.suffix == ".igc" for p in paths)
     # Sequences can be walked twice; iterators cannot.
     assert list(paths) == list(paths)
+
+
+# A real URL, as copied from the browser: a "en_gb" language segment and the
+# "total" tab, which is the cumulative standings rather than the day's flights.
+REAL_URL = (
+    "https://www.soaringspot.com/en_gb/"
+    "cim-coppa-internazionale-del-mediterraneo-rieti-2026/results/"
+    "double-seater/task-10-on-2026-08-15/total"
+)
+
+
+def test_a_real_url_parses_including_its_language_segment():
+    """en_gb rather than en, and a long competition slug."""
+    competition, plane_class, date = parse_daily_url(REAL_URL)
+    assert competition == "cim-coppa-internazionale-del-mediterraneo-rieti-2026"
+    assert plane_class == "double-seater"
+    assert date == dt.date(2026, 8, 15)
+
+
+def test_the_total_tab_is_switched_to_daily():
+    """Only the daily page carries per-competitor IGC links; scraping the
+    totals page would simply find none."""
+    url, note = normalise_daily_url(REAL_URL)
+    assert url.endswith("/task-10-on-2026-08-15/daily")
+    assert "total" in note and "daily" in note
+    # Everything before the tab is preserved.
+    assert "cim-coppa-internazionale-del-mediterraneo-rieti-2026" in url
+    assert "/en_gb/" in url
+
+
+def test_a_url_with_no_tab_gets_the_daily_one():
+    url, note = normalise_daily_url("https://www.soaringspot.com/en/comp/results/club/task-1-on-2026-08-15")
+    assert url.endswith("/daily")
+    assert note
+
+
+def test_an_already_daily_url_is_left_alone():
+    url = "https://www.soaringspot.com/en/comp/results/club/task-1-on-2026-08-15/daily"
+    assert normalise_daily_url(url) == (url, None)
+
+
+def test_the_day_reports_the_switch(tmp_path):
+    day = SoaringSpotDay(REAL_URL, tmp_path)
+    assert day.url.endswith("/daily")
+    assert day.url_note
+    assert day.competition == "cim-coppa-internazionale-del-mediterraneo-rieti-2026"
+    assert day.date == dt.date(2026, 8, 15)
+
+
+def test_a_non_results_url_is_returned_untouched_for_the_parser_to_reject():
+    url = "https://example.com/somewhere"
+    assert normalise_daily_url(url) == (url, None)
+    with pytest.raises(SoaringSpotError):
+        parse_daily_url(url)
