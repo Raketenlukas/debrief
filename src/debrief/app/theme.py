@@ -29,6 +29,66 @@ VALIDATED_SLOTS = 8
 
 
 @dataclass(frozen=True)
+class DivergingScale:
+    """Polarity against a reference: worse on one side, better on the other.
+
+    Blue and red around a grey midpoint — the documented diverging pair, chosen
+    because the two poles read as opposites and the midpoint reads as "nothing
+    in it". A single hue could not say which side of the reference a pilot was
+    on, and a rainbow would invent an order that the numbers do not have.
+
+    The arms are steps from each pole toward the grey, matched in lightness, so
+    the scale varies by hue and saturation rather than by brightness: these
+    colours are drawn on a map over arbitrary terrain, where a pale step
+    vanishes over a light field and a dark one vanishes over forest. Every step
+    holds at least 3.5:1 against the chart surface.
+
+    Three bands per arm, no more. A finer ramp measures under ΔE 4 between its
+    near-neutral steps and the midpoint, which no one can see, and under
+    colour-blind simulation the red arm collapses toward grey sooner than the
+    blue one does — at the middle step, ΔE 4.7 (deuteranopia, light). So colour
+    is never the only channel here: callers also scale the line width with the
+    magnitude and print the number in the tooltip and the table.
+    """
+
+    gain_strong: str
+    gain: str
+    neutral: str
+    loss: str
+    loss_strong: str
+
+    def color(self, loss: float | None, soft: float, hard: float) -> str:
+        """Colour for a signed value where **positive means worse**.
+
+        ``soft`` is where a difference starts being worth seeing and ``hard``
+        is where it is serious. Both are in the caller's own units — seconds
+        for a time gap, metres for a height one — because what counts as a big
+        difference is a property of the quantity, not of the palette.
+        """
+        if loss is None:
+            return self.neutral
+        if loss >= hard:
+            return self.loss_strong
+        if loss >= soft:
+            return self.loss
+        if loss <= -hard:
+            return self.gain_strong
+        if loss <= -soft:
+            return self.gain
+        return self.neutral
+
+    def legend(self, soft: float, hard: float, unit: str) -> list[tuple[str, str]]:
+        """The scale as labelled swatches, so the map is never read by guesswork."""
+        return [
+            (self.gain_strong, f"{hard:.0f}{unit} or more ahead"),
+            (self.gain, f"{soft:.0f}-{hard:.0f}{unit} ahead"),
+            (self.neutral, f"within {soft:.0f}{unit}"),
+            (self.loss, f"{soft:.0f}-{hard:.0f}{unit} behind"),
+            (self.loss_strong, f"{hard:.0f}{unit} or more behind"),
+        ]
+
+
+@dataclass(frozen=True)
 class Palette:
     surface: str
     page: str
@@ -44,6 +104,7 @@ class Palette:
     cruise: str
     thermal: str
     thermal_band: str
+    diverging: DivergingScale
 
     def leg_color(self, index: int) -> str:
         """Colour follows the leg, never its rank, so filtering never repaints.
@@ -108,6 +169,18 @@ LIGHT = Palette(
     cruise="#2a78d6",
     thermal="#eb6834",
     thermal_band="rgba(235, 104, 52, 0.13)",
+    # Stepped from the categorical blue and red toward the muted grey in OKLab
+    # (40% and 78% of the way), so the arms are lightness-matched by
+    # construction. Full poles measure ΔE 32.3 apart in normal vision, 21.6
+    # under protanopia, 27.3 under deuteranopia; the middle pair 17.7 / 11.7 /
+    # 14.7.
+    diverging=DivergingScale(
+        gain_strong="#2a78d6",
+        gain="#5c82b2",
+        neutral="#898781",
+        loss="#bf6c64",
+        loss_strong="#e34948",
+    ),
 )
 
 DARK = Palette(
@@ -151,6 +224,15 @@ DARK = Palette(
     cruise="#3987e5",
     thermal="#d95926",
     thermal_band="rgba(217, 89, 38, 0.18)",
+    # The same construction against the dark surface: poles ΔE 29.0 apart in
+    # normal vision, 19.2 protan, 24.9 deutan.
+    diverging=DivergingScale(
+        gain_strong="#3987e5",
+        gain="#638ab9",
+        neutral="#898781",
+        loss="#bf7973",
+        loss_strong="#e66767",
+    ),
 )
 
 

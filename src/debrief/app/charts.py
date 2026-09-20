@@ -25,6 +25,7 @@ from debrief.app.theme import Palette
 from debrief.core.compare import DayComparison
 from debrief.core.metrics import FlightMetrics, fix_altitude
 from debrief.core.models import Fix
+from debrief.core.progress import ProgressComparison
 
 _FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
 
@@ -309,5 +310,59 @@ def leg_delta_chart(day: DayComparison, palette: Palette, height: int = 340) -> 
     layout["barmode"] = "group"
     layout["yaxis"]["title"] = dict(text="Minutes (+ = slower)", font=dict(color=palette.ink_secondary))
     layout["xaxis"].pop("tickformat", None)
+    figure.update_layout(**layout)
+    return figure
+
+
+def progress_delta_chart(progress: ProgressComparison, palette: Palette, height: int = 360) -> go.Figure:
+    """The gap to the reference, along the task rather than per leg.
+
+    The per-leg chart answers *which leg*; this answers *where in the leg*. A
+    flat stretch is two pilots progressing at the same rate — whatever either of
+    them was doing — and every rise is time actually lost, at the kilometre it
+    was lost at. The steep bits are the debrief.
+
+    Distance on the x axis, not time: at equal times two pilots are in different
+    places, which is exactly why comparing them at equal times says nothing.
+    """
+    figure = go.Figure()
+
+    for index, pilot in enumerate(progress.pilots):
+        if pilot.is_reference:
+            continue  # a pilot against themselves is a flat line at zero
+        measured = [s for s in pilot.samples if s.delta_s is not None]
+        if len(measured) < 2:
+            continue
+        figure.add_trace(
+            go.Scatter(
+                x=[s.distance_m / 1000.0 for s in measured],
+                y=[s.delta_s / 60.0 for s in measured],
+                mode="lines",
+                name=pilot.label,
+                line=dict(color=palette.leg_color(index), width=2),
+                hovertemplate="%{x:.0f} km along task<br>%{y:+.1f} min<extra>%{fullData.name}</extra>",
+            )
+        )
+
+    figure.add_hline(y=0, line=dict(color=palette.axis, width=1))
+
+    # Turnpoints as the x axis's own landmarks: "60 km" means little, "just
+    # after Leonessa" is where the pilot's memory of the day is stored.
+    ruler = progress.ruler
+    for index, distance in enumerate(ruler.cumulative_m[1:-1], start=1):
+        figure.add_vline(
+            x=distance / 1000.0,
+            line=dict(color=palette.grid, width=1),
+            annotation=dict(
+                text=ruler.task.points[index].name,
+                font=dict(size=10, color=palette.ink_muted),
+                yanchor="bottom",
+            ),
+        )
+
+    layout = _base_layout(palette, f"Time behind {progress.reference_label}, along the task", height)
+    layout["yaxis"]["title"] = dict(text="Minutes (+ = behind)", font=dict(color=palette.ink_secondary))
+    layout["xaxis"].pop("tickformat", None)
+    layout["xaxis"]["title"] = dict(text="Task distance (km)", font=dict(color=palette.ink_secondary))
     figure.update_layout(**layout)
     return figure

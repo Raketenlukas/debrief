@@ -213,3 +213,147 @@ def test_every_pickable_datum_has_a_tooltip(deck_spec):
             continue
         for datum in layer["data"]:
             assert datum.get("info"), f"{layer['@@type']} datum without tooltip text"
+
+
+# --- the "where the time went" map -------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def progress(synthetic_igc, second_pilot_igc):
+    from debrief.core.metrics import analyse_or_summarise
+    from debrief.core.progress import ProgressComparison
+
+    fast = analyse_or_summarise(load_igc(synthetic_igc))
+    slow = analyse_or_summarise(load_igc(second_pilot_igc))
+    return ProgressComparison.build([fast, slow], reference=fast)
+
+
+@pytest.fixture(scope="module")
+def progress_spec(progress):
+    from debrief.app.maps import progress_deck
+
+    subject = [p for p in progress.pilots if not p.is_reference][0]
+    return json.loads(progress_deck(progress, subject, LIGHT, DEFAULT_BASEMAP).to_json())
+
+
+def test_the_progress_map_keeps_its_accessors_straight(progress_spec):
+    offenders = [
+        (layer["@@type"], key, value)
+        for layer in progress_spec["layers"]
+        for key, value in layer.items()
+        if isinstance(value, str) and value.startswith("@@=") and not key.startswith("get")
+    ]
+    assert offenders == []
+
+
+def test_the_progress_map_draws_the_reference_and_the_marks(progress_spec):
+    kinds = [layer["@@type"] for layer in progress_spec["layers"]]
+    assert kinds.count("PathLayer") >= 3  # task legs, the reference, the coloured track
+    assert "ScatterplotLayer" in kinds  # the worst stretches
+
+
+def test_a_field_reference_draws_no_reference_track(synthetic_igc, second_pilot_igc):
+    """A virtual best is stitched from several pilots and was never flown, so
+    there is no line to draw — and drawing one would be a lie about a flight."""
+    from debrief.app.maps import progress_deck
+    from debrief.core.metrics import analyse_or_summarise
+    from debrief.core.progress import FIELD_BEST, ProgressComparison
+
+    flights = [analyse_or_summarise(load_igc(p)) for p in (synthetic_igc, second_pilot_igc)]
+    progress = ProgressComparison.build(flights, reference=FIELD_BEST)
+    spec = json.loads(progress_deck(progress, progress.pilots[0], LIGHT, DEFAULT_BASEMAP).to_json())
+
+    labels = [
+        datum.get("info", "")
+        for layer in spec["layers"]
+        for datum in (layer["data"] if isinstance(layer.get("data"), list) else [])
+    ]
+    assert not any("the reference" in text for text in labels)
+
+
+def test_losing_time_is_red_and_gaining_it_is_blue(progress):
+    """The one thing a diverging scale must never get backwards."""
+    from debrief.app.maps import PROGRESS_TIME, _segment_loss, progress_thresholds
+
+    soft, hard, _ = progress_thresholds(PROGRESS_TIME)
+    subject = [p for p in progress.pilots if not p.is_reference][0]
+    worst = subject.ranked_segments(worst_first=True)[0]
+    assert _segment_loss(worst, PROGRESS_TIME) == worst.lost_s
+    assert LIGHT.diverging.color(worst.lost_s, soft, hard) == LIGHT.diverging.loss_strong
+    assert LIGHT.diverging.color(-worst.lost_s, soft, hard) == LIGHT.diverging.gain_strong
+
+
+def test_height_flips_sign_so_that_lower_reads_as_worse(progress):
+    """Being below the reference is the bad one. A scale whose red arm meant
+    'higher' would send a pilot exactly the wrong message."""
+    from debrief.app.maps import PROGRESS_HEIGHT, _segment_loss
+
+    subject = [p for p in progress.pilots if not p.is_reference][0]
+    measured = [s for s in subject.segments if s.height_delta_m is not None]
+    assert measured
+    for segment in measured[:20]:
+        assert _segment_loss(segment, PROGRESS_HEIGHT) == -segment.height_delta_m
+
+
+def test_thicker_track_means_a_bigger_difference(progress_spec):
+    """Colour alone cannot carry magnitude: under colour-blind simulation the
+    red arm sits closer to the neutral than the blue one does."""
+    widths = [
+        datum["width"]
+        for layer in progress_spec["layers"]
+        for datum in (layer["data"] if isinstance(layer.get("data"), list) else [])
+        if "width" in datum
+    ]
+    assert len(set(widths)) > 1
+
+
+def test_progress_tooltips_are_plain_text(progress_spec):
+    """Streamlit renders a deck tooltip as text, so markup arrives as literal
+    angle brackets."""
+    for layer in progress_spec["layers"]:
+        for datum in layer["data"] if isinstance(layer.get("data"), list) else []:
+            assert "<" not in datum.get("info", "")
+
+
+def test_the_thresholds_differ_by_what_is_being_measured():
+    from debrief.app.maps import PROGRESS_HEIGHT, PROGRESS_TIME, progress_thresholds
+
+    seconds = progress_thresholds(PROGRESS_TIME)
+    metres = progress_thresholds(PROGRESS_HEIGHT)
+    assert seconds[0] < seconds[1] and metres[0] < metres[1]
+    assert seconds[2].strip() == "s"
+    assert metres[2].strip() == "m"
+
+
+def test_a_time_threshold_scales_with_the_stretch_it_judges():
+    """Fixed thresholds would paint a 25 km stretch red from end to end and
+    leave a 2 km one permanently in the neutral band — the same flying, two
+    opposite readings, decided by a slider."""
+    from debrief.app.maps import PROGRESS_HEIGHT, PROGRESS_TIME, progress_thresholds
+
+    fine = progress_thresholds(PROGRESS_TIME, 2000.0)
+    coarse = progress_thresholds(PROGRESS_TIME, 25000.0)
+    assert coarse[0] / fine[0] == pytest.approx(25000.0 / 2000.0)
+    assert coarse[1] / fine[1] == pytest.approx(25000.0 / 2000.0)
+    # Height is a state, not a rate, so it does not scale.
+    assert progress_thresholds(PROGRESS_HEIGHT, 2000.0) == progress_thresholds(PROGRESS_HEIGHT, 25000.0)
+
+
+def test_the_progress_map_never_mixes_identity_with_polarity(progress_spec):
+    """The diverging scale spends the colour channel on which side of the
+    reference a pilot was. Any pilot-identity colour on the same map would be
+    read as a position on that scale."""
+    scale = LIGHT.diverging
+    # Alpha varies between the track and its markers; the hue is the message.
+    allowed = {
+        tuple(hex_to_rgb(colour)[:3])
+        for colour in (scale.gain_strong, scale.gain, scale.neutral, scale.loss, scale.loss_strong)
+    }
+    coloured = [
+        tuple(datum["color"][:3])
+        for layer in progress_spec["layers"]
+        for datum in (layer["data"] if isinstance(layer.get("data"), list) else [])
+        if "color" in datum
+    ]
+    assert coloured
+    assert set(coloured) <= allowed

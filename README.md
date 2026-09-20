@@ -104,6 +104,8 @@ src/debrief/
     models.py   Flight (fact) + Pilot / TaskDef (dimensions)
     igc.py      the only module that knows IGC syntax
     metrics.py  the four metric families
+    compare.py  a field over one task: leg deltas and distributions
+    progress.py task distance over time, and the gap to a reference
   sources/    importers; one per place flights come from
   app/        Streamlit UI, Plotly charts, pydeck map
   cli.py      text debrief
@@ -182,9 +184,10 @@ thinning the trace sets payload size rather than smoothness.
 
 Switch the sidebar to **Compare a day** to put a field side by side over one
 task. Pick the competition, class and day from the archive, then choose up to
-eight pilots — eight because that is how many slots the palette has that clear
-the colour-blind separation gates; past that pilots would share a colour and the
-legend would stop meaning anything.
+twenty pilots. The first eight colours clear every colour-blind separation
+check; the remaining twelve are as far apart as twenty categories can be, which
+is not far enough — the worst pair measures ΔE 11.1 against a floor of 15. Past
+eight the picker says so, and the tables carry every number as text.
 
 The barogram aligns two ways, and the difference matters:
 
@@ -203,6 +206,57 @@ tactics (when and how high, and how long before the first climb), climb quality
 achieved glide, detour). Ranks and percentiles are against the pilots you
 selected, not the whole field — comparing yourself with the three people you
 chose is usually the question being asked.
+
+## Where the time went
+
+A leg delta says *which leg* cost you three minutes. The **Where the time went**
+tab says where in the leg, by swapping the ruler: instead of comparing two
+pilots at the same moment — meaningless when they started twenty minutes apart
+and are forty kilometres from each other — it compares them at the same *point
+on the course*.
+
+```
+delta(d) = (time you took to reach task distance d)
+         - (time the reference took to reach task distance d)
+```
+
+`delta` is flat where two pilots progressed equally and rises where one fell
+behind, so its slope is the answer. Over any stretch the rise is exactly the
+seconds lost on that stretch, which is what the map colours, what the chart
+plots and what the table counts — the three agree by construction, and they
+agree with the leg deltas too, because the same seconds are being counted at a
+finer resolution.
+
+Task distance is measured the way a scorer measures it: how far along the
+declared course the glider has got, not how far it has flown. Flying away from
+the next turnpoint earns nothing, so a detour costs distance rather than
+silently adding it, and the measure is forced never to decrease so that "when
+did you first reach here" has one answer even while circling. Both pilots are
+read the same way, on first arrival — which is why a pilot measured against
+themselves comes out as exactly zero.
+
+Four controls:
+
+| Control | What it changes |
+|---|---|
+| Whose flight | the track on the map. One pilot, not the field: the colour channel is spent on polarity, so it has none left for identity |
+| Measured against | one rival, or **the field's best** (the quickest anyone got to each point — a ceiling nobody flew) or **the field's median** |
+| Colour the track by | **time**, which is what the day is scored on, or **height** at the same point on course, which is usually the cause of which lost time is the symptom |
+| Stretch length | how much course each coloured piece covers |
+
+Stretch length is the one worth understanding. Two pilots almost never climb in
+the same place, so at 2 km you mostly see *who stopped where*: red where you
+climbed, blue where the reference did, and the pair says nothing about who was
+quicker. That resolution is for finding the one thermal that cost the day. Ten
+kilometres — the default — holds a climb and the glide it buys, which is the
+comparison that answers the question. The colour thresholds scale with the
+stretch (1 s/km to leave the neutral band, 4 s/km to reach the far end), so the
+same flying reads the same way at every setting.
+
+Colour is never the only channel. The track thickens with the size of the
+difference, the five worst stretches are ringed, hovering gives the numbers, and
+the table lists them with the clock time, the time into the task and the
+turnpoint they happened before.
 
 ## The map
 
