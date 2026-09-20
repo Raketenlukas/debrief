@@ -11,6 +11,17 @@ from debrief.app.theme import BASEMAPS, DARK, DEFAULT_BASEMAP, LIGHT, palette_fo
 
 
 @pytest.mark.parametrize("palette", [LIGHT, DARK], ids=["light", "dark"])
+def test_the_first_slots_are_the_validated_set(palette):
+    """Eight slots clear every separation check; the rest extend the palette for
+    large fields and are explicitly not colour-alone reliable."""
+    from debrief.app.theme import VALIDATED_SLOTS
+
+    assert VALIDATED_SLOTS == 8
+    assert len(palette.series) == 20
+    assert len(set(palette.series[:VALIDATED_SLOTS])) == VALIDATED_SLOTS
+
+
+@pytest.mark.parametrize("palette", [LIGHT, DARK], ids=["light", "dark"])
 def test_leg_colours_are_never_reused_within_the_palette(palette):
     colours = [palette.leg_color(i) for i in range(len(palette.series))]
     assert len(set(colours)) == len(colours)
@@ -48,14 +59,12 @@ def test_every_basemap_resolves_to_a_style():
     for name, source in BASEMAPS.items():
         assert source["attribution"].strip(), name
         style = basemap_style(name)
-        if "style" in source:
-            # A hosted vector style is used as-is, and wins when both exist.
-            assert style == source["style"], name
-            assert style.startswith("https://") and style.endswith("style.json"), name
-        else:
-            # A raster-only source is wrapped in a style document, carried inline.
-            assert style.startswith("data:application/json,"), name
-            assert "%7B%22version%22%3A%208" in style, name  # {"version": 8
+        # Every basemap is a raster source wrapped in a style document: the two
+        # maps must show the same thing, and CARTO's raster tiles now need an
+        # account even though their vector styles do not.
+        assert style.startswith("data:application/json,"), name
+        assert "%7B%22version%22%3A%208" in style, name  # {"version": 8
+        assert "raster" in source, name
 
 
 def test_every_basemap_also_offers_raster_tiles():

@@ -38,6 +38,8 @@
   </select>
   <button id="home" title="Back to the beginning">⏮</button>
   <button id="fit" title="Fit the map to the tracks">Fit</button>
+  <button id="zoomin" title="Zoom in">+</button>
+  <button id="zoomout" title="Zoom out">−</button>
   <span id="clock"></span>
 </div>
 <div id="legend"></div>
@@ -326,11 +328,43 @@ window.addEventListener("mousemove", (e) => {
   drawMap();
 });
 window.addEventListener("mouseup", () => { panning = null; mapC.classList.remove("dragging"); });
+// Zoom about a point: keep the geography under that point fixed, otherwise
+// zooming walks the map away from whatever you were looking at. Whole-number
+// steps only, so tiles are drawn at their native resolution.
+function zoomBy(delta, anchorX, anchorY) {
+  const next = Math.max(2, Math.min(16, zoom + delta));
+  if (next === zoom) return;
+  const ax = anchorX === undefined ? mapSize.w / 2 : anchorX;
+  const ay = anchorY === undefined ? mapSize.h / 2 : anchorY;
+  const lon = x2lon(lon2x(centre.lon, zoom) + (ax - mapSize.w / 2), zoom);
+  const lat = y2lat(lat2y(centre.lat, zoom) + (ay - mapSize.h / 2), zoom);
+  zoom = next;
+  centre = {
+    lon: x2lon(lon2x(lon, zoom) - (ax - mapSize.w / 2), zoom),
+    lat: y2lat(lat2y(lat, zoom) - (ay - mapSize.h / 2), zoom),
+  };
+  drawMap();
+}
+
+let wheelAcc = 0;
 mapC.addEventListener("wheel", (e) => {
   e.preventDefault();
-  zoom = Math.max(2, Math.min(16, zoom + (e.deltaY < 0 ? 1 : -1)));
-  drawMap();
+  // Trackpads emit many small deltas and mice one large one; accumulating
+  // means a step happens at the same total scroll either way.
+  wheelAcc += e.deltaY;
+  const steps = Math.trunc(wheelAcc / 120);
+  if (!steps) return;
+  wheelAcc -= steps * 120;
+  const r = mapC.getBoundingClientRect();
+  zoomBy(-steps, e.clientX - r.left, e.clientY - r.top);
 }, {passive: false});
+
+document.getElementById("zoomin").onclick = () => zoomBy(1);
+document.getElementById("zoomout").onclick = () => zoomBy(-1);
+mapC.addEventListener("dblclick", (e) => {
+  const r = mapC.getBoundingClientRect();
+  zoomBy(1, e.clientX - r.left, e.clientY - r.top);
+});
 
 window.addEventListener("resize", () => {
   mapSize = sizeCanvas(mapC); barSize = sizeCanvas(barC);

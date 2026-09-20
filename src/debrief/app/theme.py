@@ -20,6 +20,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# How many categorical slots clear every separation check. Beyond this the
+# palette still works, but 20 categories cannot all be told apart: the best
+# achievable worst pair measures ΔE 11.1 against a floor of 15, so at large
+# field sizes colour narrows the search and the legend, the hover text and the
+# comparison table are what actually identify a track.
+VALIDATED_SLOTS = 8
+
 
 @dataclass(frozen=True)
 class Palette:
@@ -45,6 +52,10 @@ class Palette:
         would otherwise give two legs the same colour and silently make the
         legend ambiguous. Legs past the last slot share one neutral instead,
         which reads as "beyond the palette" rather than as a specific leg.
+
+        The first :data:`VALIDATED_SLOTS` clear every separation check; the rest
+        are as far apart as 20 categories can be, which is not far enough to
+        rely on colour alone.
         """
         if index < len(self.series):
             return self.series[index]
@@ -60,6 +71,7 @@ LIGHT = Palette(
     grid="#e1e0d9",
     axis="#c3c2b7",
     series=(
+        # Slots 1-8 are the validated set and pass every separation check.
         "#2a78d6",  # blue
         "#eb6834",  # orange
         "#1baf7a",  # aqua
@@ -68,6 +80,19 @@ LIGHT = Palette(
         "#008300",  # green
         "#4a3aa7",  # violet
         "#e34948",  # red
+        # Slots 9-20 extend the set for large fields. See VALIDATED_SLOTS.
+        "#79c316",
+        "#a81982",
+        "#8ca9f1",
+        "#ba0d01",
+        "#229ebc",
+        "#d43b88",
+        "#a09037",
+        "#b364e9",
+        "#8d5403",
+        "#ea76eb",
+        "#a75464",
+        "#845ea2",
     ),
     spatial_series=("#2a78d6", "#eb6834", "#1baf7a"),
     overflow="#898781",
@@ -102,6 +127,18 @@ DARK = Palette(
         "#008300",  # green
         "#9085e9",  # violet
         "#e66767",  # red
+        "#79c316",
+        "#8831b3",
+        "#37c695",
+        "#ba032c",
+        "#46bcd7",
+        "#8d5403",
+        "#ee75e6",
+        "#83862e",
+        "#bb49bd",
+        "#4b5ea2",
+        "#e18db0",
+        "#8e4771",
     ),
     spatial_series=("#3987e5", "#d95926", "#199e70"),
     overflow="#898781",
@@ -152,33 +189,25 @@ def airspace_family(airspace_class: str | None, airspace_type: str | None = None
     return "other"
 
 
-# Base maps are MapLibre *style* URLs, not raster tile templates.
+# Base maps are raster tile templates, from providers that need no API key.
 #
-# A deck.gl TileLayer cannot draw raster tiles on its own: its default
-# renderSubLayers builds a GeoJsonLayer, so a PNG tile is fetched and then
-# silently dropped. Rendering rasters needs a renderSubLayers callback, which is
-# a JS function and therefore cannot cross pydeck's JSON bridge. The basemap
-# belongs to the map, not to a layer.
+# Both maps use the same source: the overview wraps it in a MapLibre style
+# document, and the replay draws the tiles onto a canvas itself. CARTO's vector
+# styles look better but their raster endpoints now require an account, and a
+# basemap that renders in one view and asks for a key in the other is worse
+# than a plainer one that works in both.
 #
-# The CARTO styles need no API key. Raster sources (terrain, satellite) are
-# wrapped in a minimal style document below.
+# A deck.gl TileLayer cannot draw raster tiles on its own either: its default
+# renderSubLayers builds a GeoJsonLayer, so a PNG is fetched and then silently
+# dropped. The basemap belongs to the map, not to a layer.
 BASEMAPS: dict[str, dict[str, str]] = {
-    # The vector styles carry a raster equivalent too: the replay draws its own
-    # map on a canvas and cannot render vector tiles.
-    "Clean (CARTO Positron)": {
-        "style": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-        "raster": "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-        "attribution": "© OpenStreetMap contributors, © CARTO",
+    "Streets (Esri)": {
+        "raster": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+        "attribution": "© Esri, HERE, Garmin, OpenStreetMap contributors",
     },
-    "Streets (CARTO Voyager)": {
-        "style": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
-        "raster": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
-        "attribution": "© OpenStreetMap contributors, © CARTO",
-    },
-    "Dark (CARTO Dark Matter)": {
-        "style": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-        "raster": "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-        "attribution": "© OpenStreetMap contributors, © CARTO",
+    "Topographic (Esri)": {
+        "raster": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+        "attribution": "© Esri, HERE, Garmin, USGS, OpenStreetMap contributors",
     },
     "Terrain (OpenTopoMap)": {
         "raster": "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
@@ -196,7 +225,7 @@ BASEMAPS: dict[str, dict[str, str]] = {
     },
 }
 
-DEFAULT_BASEMAP = "Clean (CARTO Positron)"
+DEFAULT_BASEMAP = "Streets (Esri)"
 
 
 def raster_style(url: str, attribution: str, background: str = "#e8eef5") -> str:
@@ -240,18 +269,16 @@ def basemap_raster(name: str) -> str:
 
 
 def basemap_style(name: str) -> str:
-    """The style URL for a named basemap, wrapping raster sources as needed.
+    """The MapLibre style for a named basemap.
 
     A value that is already a style URL passes through, so a custom or
-    self-hosted MapLibre style can be used without editing this table.
+    self-hosted style can be used without editing this table.
     """
     source = BASEMAPS.get(name)
     if source is None:
         if name.startswith(("http://", "https://", "data:")):
             return name
         raise KeyError(f"unknown basemap {name!r}; expected one of {sorted(BASEMAPS)}")
-    if "style" in source:
-        return source["style"]
     return raster_style(source["raster"], source["attribution"])
 
 

@@ -10,17 +10,18 @@ import streamlit as st
 from debrief.app import replay
 from debrief.app.charts import comparison_barogram, leg_delta_chart
 from debrief.app.maps import comparison_deck
-from debrief.app.theme import Palette
+from debrief.app.theme import VALIDATED_SLOTS, Palette
 from debrief.core.airspace import Airspace
 from debrief.core.compare import DayComparison
 from debrief.core.igc import IGCError, load_igc
 from debrief.core.metrics import FlightMetrics, analyse_or_summarise
 from debrief.sources.local import ArchivedDay, archived_days
 
-# Colours come from the categorical palette, which holds eight slots that clear
-# the colour-blind separation gates. Past that, pilots would share a colour and
-# the legend would stop meaning anything.
-MAX_COMPARED = 8
+# The palette holds twenty slots. The first eight clear every colour-blind
+# separation check; the rest are as far apart as twenty categories can be,
+# which is not far enough to rely on colour alone — hence the note below the
+# picker, and why the comparison table carries every number as text.
+MAX_COMPARED = 20
 
 
 def _duration(seconds: float | None) -> str:
@@ -141,11 +142,16 @@ def render(archive_root: Path, palette: Palette, basemap: str, airspaces: list[A
         list(labels),
         default=list(labels)[: min(4, len(labels))],
         max_selections=MAX_COMPARED,
-        help=f"Up to {MAX_COMPARED}: past that pilots would share a colour.",
+        help=f"Up to {MAX_COMPARED} pilots.",
     )
     if not chosen:
         st.info("Pick at least one pilot.")
         return
+    if len(chosen) > VALIDATED_SLOTS:
+        st.caption(
+            f"Past {VALIDATED_SLOTS} pilots some colours become hard to tell apart, "
+            "especially with colour-blindness. Hover a track, or read the table below."
+        )
 
     reference_label = st.selectbox(
         "Compare against",

@@ -129,3 +129,52 @@ def test_a_flight_too_short_to_replay_is_dropped(flights):
 
 def test_default_target_is_sane():
     assert 500 <= TARGET_SAMPLES <= 5000
+
+
+# --- the page itself ---------------------------------------------------------
+#
+# The browser half is verified by driving it, which needs a running app. These
+# guard the two things that broke silently: a control disappearing from the
+# toolbar, and a placeholder the renderer forgets to substitute (a leftover
+# ``__TILES__`` is a JavaScript syntax error, so the whole replay goes blank).
+
+
+@pytest.fixture(scope="module")
+def page_template():
+    from pathlib import Path
+
+    import debrief.app.replay as replay_module
+
+    return (Path(replay_module.__file__).parent / "replay_page.html").read_text(encoding="utf-8")
+
+
+def test_the_toolbar_carries_every_control_the_renderer_expects(page_template):
+    for control in ("play", "dir", "speed", "home", "fit", "zoomin", "zoomout", "clock"):
+        assert f'id="{control}"' in page_template, control
+
+
+def test_zooming_is_reachable_by_button_wheel_and_double_click(page_template):
+    """A mouse, a trackpad and a touchpad user each reach for a different one."""
+    assert 'getElementById("zoomin").onclick' in page_template
+    assert 'getElementById("zoomout").onclick' in page_template
+    assert 'addEventListener("wheel"' in page_template
+    assert 'addEventListener("dblclick"' in page_template
+
+
+def test_every_placeholder_in_the_page_is_one_the_renderer_substitutes(page_template):
+    """Renaming a placeholder in the template without touching render() leaves a
+    bare ``__NAME__`` in the emitted script."""
+    import re
+
+    substituted = {
+        "__PAYLOAD__",
+        "__PALETTE__",
+        "__SURFACE__",
+        "__INK__",
+        "__MUTED__",
+        "__GRID__",
+        "__AXIS__",
+        "__TILES__",
+        "__ATTRIBUTION__",
+    }
+    assert set(re.findall(r"__[A-Z_]+__", page_template)) == substituted
