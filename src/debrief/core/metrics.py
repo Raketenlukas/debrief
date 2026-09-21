@@ -31,6 +31,7 @@ from opensoar.utilities.helper_functions import (
 
 from debrief.core.igc import ASSUMED_SECTOR_LADDER, to_opensoar_task, with_assumed_sectors
 from debrief.core.models import Fix, Flight, TaskDef
+from debrief.core.trace import span as trace_span
 
 # opensoar's own default. GPS altitude is the usual choice for height-above-sea
 # analysis; pressure altitude is the one the scorer uses for start-height limits,
@@ -115,7 +116,7 @@ def _phase_totals(fixes: list[Fix], phases: FlightPhases, leg: int | None = None
 
     cruise_s = cruise_distance = cruise_straight = cruise_loss = 0.0
     for phase in phases.cruises():
-        span = [f for f in phase.fixes if fixes[0]["datetime"] <= f["datetime"] <= fixes[-1]["datetime"]]
+        span = trace_span(phase.fixes, fixes[0]["datetime"], fixes[-1]["datetime"])
         if len(span) < 2:
             continue
         cruise_s += _seconds(span[0]["datetime"], span[-1]["datetime"])
@@ -364,10 +365,6 @@ class FlightMetrics:
         return _safe_div(distance, loss)
 
 
-def _slice_trace(trace: list[Fix], start: dt.datetime, end: dt.datetime) -> list[Fix]:
-    return [f for f in trace if start <= f["datetime"] <= end]
-
-
 def _phase_bounds(phase, leg: int | None) -> Thermal | None:
     fixes = phase.fixes
     if len(fixes) < 2:
@@ -440,7 +437,7 @@ def analyse(
             warnings.append(f"leg {leg} has no end fix and was skipped")
             continue
 
-        leg_fixes = _slice_trace(flight.trace, start_fix["datetime"], end_fix["datetime"])
+        leg_fixes = trace_span(flight.trace, start_fix["datetime"], end_fix["datetime"])
         if len(leg_fixes) < 2:
             warnings.append(f"leg {leg} has too few fixes to measure")
             continue

@@ -25,12 +25,14 @@ from opensoar.task.waypoint import Waypoint
 
 from debrief.core.models import (
     CompetitionDayRef,
+    Fix,
     Flight,
     FlightSource,
     Pilot,
     TaskDef,
     TaskPoint,
 )
+from debrief.core.trace import in_order
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +239,44 @@ def _flight_date(parsed: dict[str, Any], trace: list[dict[str, Any]]) -> dt.date
     raise IGCError("file has neither an HFDTE header nor any fixes")
 
 
+def _prepare_trace(trace: list[Fix]) -> list[Fix]:
+    """Put the trace into the shape everything downstream assumes.
+
+    Two invariants, established once here rather than defended everywhere:
+    the fixes are in time order, and their timezone is the standard library's
+    UTC.
+    """
+    _normalise_timezones(trace)
+    if not in_order(trace):
+        # A logger that writes out of order, or a flight crossing midnight
+        # whose date rollover was missed. Sorting makes the rest of the
+        # pipeline correct; saying so makes the file's problem visible.
+        logger.warning("trace is not in time order; sorting by time")
+        trace.sort(key=lambda fix: fix["datetime"])
+    return trace
+
+
+def _normalise_timezones(trace: list[Fix]) -> None:
+    """Re-stamp every fix with the standard library's UTC.
+
+    ``aerofiles`` attaches its own ``TimeZoneFix``, whose ``utcoffset`` builds a
+    fresh ``timedelta`` on every call — and every comparison between two aware
+    datetimes calls it. That is the single most expensive thing this project
+    does: a day of twenty flights spends most of its time there rather than in
+    any analysis. ``datetime.timezone.utc`` answers the same question from C.
+
+    The instant each fix refers to is unchanged; only the object describing its
+    offset is. aerofiles says as much in the class itself — it exists for
+    Python 2.6 and "can be replaced if we set Python 3.x as a minimum
+    requirement", which this project has.
+    """
+    utc = dt.UTC
+    for fix in trace:
+        when = fix.get("datetime")
+        if when is not None and when.tzinfo is not utc:
+            fix["datetime"] = when.astimezone(utc)
+
+
 def load_igc(
     path: str | Path,
     competition: CompetitionDayRef | None = None,
@@ -260,6 +300,7 @@ def load_igc(
     errors, trace = parsed["fix_records"]
     if not trace:
         raise IGCError(f"{path.name}: contains no usable B records ({errors})")
+    trace = _prepare_trace(trace)
 
     date = _flight_date(parsed, trace)
     task, contest_info, competitor_info = get_info_from_comment_lines(parsed, date, start_time_buffer)

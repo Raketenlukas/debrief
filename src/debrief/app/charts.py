@@ -26,6 +26,7 @@ from debrief.core.compare import DayComparison
 from debrief.core.metrics import FlightMetrics, fix_altitude
 from debrief.core.models import Fix
 from debrief.core.progress import ProgressComparison
+from debrief.core.trace import span as trace_span
 
 _FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
 
@@ -78,7 +79,7 @@ def _phase_series(trace: list[Fix], spans: list[tuple[dt.datetime, dt.datetime]]
     xs: list = []
     ys: list = []
     for start, end in spans:
-        segment = [f for f in trace if start <= f["datetime"] <= end]
+        segment = trace_span(trace, start, end)
         if len(segment) < 2:
             continue
         xs.extend([f["datetime"] for f in segment] + [None])

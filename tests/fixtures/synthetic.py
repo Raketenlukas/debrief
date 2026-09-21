@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
+from pathlib import Path
 
 from pyproj import Geod
 
@@ -61,7 +62,7 @@ def _dm(value: float, deg_width: int) -> tuple[int, int, int]:
     degrees = int(magnitude)
     minutes_float = (magnitude - degrees) * 60.0
     minutes = int(minutes_float)
-    thousandths = int(round((minutes_float - minutes) * 1000.0))
+    thousandths = round((minutes_float - minutes) * 1000.0)
     if thousandths == 1000:  # rounding carry
         thousandths = 0
         minutes += 1
@@ -298,15 +299,14 @@ def build_igc(
             lines.append(f"LSEEYOU OZ={oz},Style={style},R1={int(point.radius)}m,A1=180")
 
     for when, lat, lon, alt in fixes:
-        lines.append(b_record(when, lat, lon, int(round(alt))))
+        lines.append(b_record(when, lat, lon, round(alt)))
 
     return "\n".join(lines) + "\n"
 
 
 def write_igc(path, **kwargs) -> str:
     text = build_igc(**kwargs)
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(text)
+    Path(path).write_text(text, encoding="utf-8")
     return text
 
 

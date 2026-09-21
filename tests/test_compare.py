@@ -62,7 +62,7 @@ def test_total_delta_grows_with_rank(day):
 
 
 def test_cumulative_deltas_are_a_running_total(day):
-    comparison = [c for c in day.comparisons() if c.metrics is not day.reference][0]
+    comparison = next(c for c in day.comparisons() if c.metrics is not day.reference)
     running = comparison.cumulative_deltas()
     assert running[-1] == pytest.approx(comparison.total_delta_s)
     assert running == sorted(running), "a uniformly slower pilot never claws time back"
@@ -140,7 +140,7 @@ def test_flights_without_a_task_are_dropped(day, synthetic_igc, tmp_path):
             if not line.startswith(("C", "LCU::", "LSEEYOU"))
         )
     )
-    mixed = list(day.flights) + [analyse_or_summarise(load_igc(stripped))]
+    mixed = [*list(day.flights), analyse_or_summarise(load_igc(stripped))]
 
     rebuilt = DayComparison.build(mixed)
     assert all(f.has_task for f in rebuilt.flights)

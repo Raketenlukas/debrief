@@ -38,14 +38,13 @@ class SoaringSpotError(RuntimeError):
     """Raised when a day cannot be imported."""
 
 
-# SoaringSpot shows a day's results under tabs: "daily" has each competitor's
-# flight, "total" has the cumulative standings. Only the daily page carries the
-# per-flight IGC links, so a total URL is switched over rather than failing.
-RESULTS_TABS = {"daily", "total"}
-
-
 def normalise_daily_url(url: str) -> tuple[str, str | None]:
     """Point a results URL at the daily tab. Returns (url, note-if-changed).
+
+    SoaringSpot shows a day's results under tabs: "daily" has each competitor's
+    flight, "total" has the cumulative standings. Only the daily page carries
+    the per-flight IGC links, so a total URL is switched over rather than
+    failing.
 
     Copying the URL from the browser usually lands on whichever tab was open,
     and "total" is a common one to be reading. Silently scraping the wrong page

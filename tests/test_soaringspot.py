@@ -302,5 +302,5 @@ def test_a_competition_with_no_day_links_says_so(tmp_path):
     from debrief.sources.soaringspot import import_competition
 
     url = "http://127.0.0.1:9/en/comp/results/club/task-1-on-2024-06-15/daily"
-    with pytest.raises(SoaringSpotError, match="could not read|no competition days"):
+    with pytest.raises(SoaringSpotError, match=r"could not read|no competition days"):
         import_competition(url, tmp_path)

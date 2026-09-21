@@ -46,8 +46,9 @@ class Altitude:
     text: str  # what the file actually said, for display
 
     @property
-    def is_ground(self) -> bool:
-        return self.datum == "agl" and self.feet == 0
+    def is_agl(self) -> bool:
+        """Measured from the ground rather than from sea level."""
+        return self.datum == "agl"
 
     @property
     def is_unlimited(self) -> bool:
@@ -78,10 +79,9 @@ class Airspace:
         errs toward showing an airspace rather than hiding one, which is the
         safe direction for a filter whose job is "what was near me".
         """
-        floor = 0.0 if self.floor.datum == "agl" else (self.floor.feet or 0.0)
-        ceiling = math.inf if self.ceiling.is_unlimited else (self.ceiling.feet or 0.0)
-        if self.ceiling.datum == "agl":
-            ceiling = math.inf
+        floor = 0.0 if self.floor.is_agl else (self.floor.feet or 0.0)
+        unbounded_above = self.ceiling.is_unlimited or self.ceiling.is_agl
+        ceiling = math.inf if unbounded_above else (self.ceiling.feet or 0.0)
         return floor <= high_ft and ceiling >= low_ft
 
 

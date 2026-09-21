@@ -68,16 +68,14 @@ def payload(
         if len(fixes) < 2:
             continue
 
-        if align == "start" and metrics.start_time is not None:
-            origin = metrics.start_time
-        else:
-            origin = None
+        aligned_on_start = align == "start" and metrics.start_time is not None
+        origin = metrics.start_time if aligned_on_start else None
 
         times = []
         for fix in fixes:
             moment = fix["datetime"]
             seconds = (moment - origin).total_seconds() if origin is not None else moment.timestamp()
-            times.append(int(round(seconds)))
+            times.append(round(seconds))
 
         tracks.append(
             ReplayTrack(
@@ -86,7 +84,7 @@ def payload(
                 t=times,
                 lon=[round(f["lon"], 5) for f in fixes],
                 lat=[round(f["lat"], 5) for f in fixes],
-                alt=[int(round(fix_altitude(f))) for f in fixes],
+                alt=[round(fix_altitude(f)) for f in fixes],
             )
         )
 

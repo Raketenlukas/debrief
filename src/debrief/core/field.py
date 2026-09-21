@@ -43,8 +43,9 @@ from dataclasses import dataclass
 from pyproj import Transformer
 
 from debrief.core.metrics import DEFAULT_GPS_ALTITUDE, FlightMetrics, fix_altitude
-from debrief.core.models import Fix
 from debrief.core.progress import GEOD, ProgressTrack, progress_track
+from debrief.core.trace import outside as trace_outside
+from debrief.core.trace import span as trace_span
 
 # A climb has to be a climb. The phase detector segments on turn rate, so it
 # emits brief wriggles — a course correction, a bump taken in a turn — that are
@@ -92,15 +93,6 @@ class ClimbPoint:
     exit_altitude: float
     drift_m: float
 
-    @property
-    def base_altitude(self) -> float:
-        """Where the climb was entered — the height the field was working from."""
-        return self.entry_altitude
-
-    @property
-    def top_altitude(self) -> float:
-        return self.exit_altitude
-
 
 @dataclass(frozen=True)
 class TrackPoint:
@@ -111,10 +103,6 @@ class TrackPoint:
     longitude: float
     altitude: float
     time: dt.datetime
-
-
-def _span(trace: list[Fix], start: dt.datetime, end: dt.datetime) -> list[Fix]:
-    return [f for f in trace if start <= f["datetime"] <= end]
 
 
 def field_climbs(
@@ -139,7 +127,7 @@ def field_climbs(
             climb_ms = thermal.average_climb_ms
             if climb_ms is None:
                 continue
-            fixes = _span(trace, thermal.start_time, thermal.end_time)
+            fixes = trace_span(trace, thermal.start_time, thermal.end_time)
             if len(fixes) < 2:
                 continue
             latitude = sum(f["lat"] for f in fixes) / len(fixes)
@@ -179,10 +167,8 @@ def field_cruise(
         pilot = metrics.flight.pilot.label
         spans = [(t.start_time, t.end_time) for t in metrics.thermals]
         last: dt.datetime | None = None
-        for fix in metrics.flight.trace:
+        for fix in trace_outside(metrics.flight.trace, spans):
             when = fix["datetime"]
-            if any(start <= when <= end for start, end in spans):
-                continue
             if last is not None and (when - last).total_seconds() < sample_seconds:
                 continue
             out.append(
@@ -406,14 +392,6 @@ class CompositeBest:
             for pilot, (count, metres) in tally.items()
         ]
         return sorted(rows, key=lambda row: row[2], reverse=True)
-
-    @property
-    def opening_altitude(self) -> float | None:
-        return self.altitudes[0] if self.altitudes else None
-
-    @property
-    def lowest_altitude(self) -> float | None:
-        return min(self.altitudes) if self.altitudes else None
 
     @property
     def gliders(self) -> list[str]:

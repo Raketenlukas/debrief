@@ -55,8 +55,8 @@ def test_thinning_respects_the_target_and_keeps_the_ends(flights):
     for index, track in enumerate(small["tracks"]):
         assert len(track["t"]) <= 260, "thinning overshot its target"
         trace = flights[index].flight.trace
-        assert track["t"][0] == int(round(trace[0]["datetime"].timestamp()))
-        assert track["t"][-1] == int(round(trace[-1]["datetime"].timestamp()))
+        assert track["t"][0] == round(trace[0]["datetime"].timestamp())
+        assert track["t"][-1] == round(trace[-1]["datetime"].timestamp())
 
 
 def test_clock_alignment_puts_pilots_on_one_timeline(clock_payload, flights):
@@ -74,7 +74,7 @@ def test_start_alignment_measures_from_each_pilots_own_start(flights):
     for index, track in enumerate(aligned["tracks"]):
         start = flights[index].start_time
         trace = flights[index].flight.trace
-        expected_first = int(round((trace[0]["datetime"] - start).total_seconds()))
+        expected_first = round((trace[0]["datetime"] - start).total_seconds())
         assert track["t"][0] == expected_first
         # Pre-start time is negative; the task itself begins at zero.
         assert track["t"][0] < 0 < track["t"][-1]

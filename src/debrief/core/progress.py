@@ -38,6 +38,7 @@ from pyproj import Geod
 
 from debrief.core.metrics import DEFAULT_GPS_ALTITUDE, FlightMetrics, fix_altitude
 from debrief.core.models import TaskDef
+from debrief.core.trace import span as trace_span
 
 GEOD = Geod(ellps="WGS84")
 
@@ -241,7 +242,7 @@ def progress_track(
         target = metrics.task.points[leg.index + 1]
         leg_start = ruler.cumulative_m[leg.index]
         leg_length = ruler.leg_length_m[leg.index]
-        span = [f for f in trace if leg.start_time <= f["datetime"] <= leg.end_time]
+        span = trace_span(trace, leg.start_time, leg.end_time)
 
         for position, fix in enumerate(span):
             # Consecutive legs share their boundary fix — the rounding fix ends
@@ -249,10 +250,14 @@ def progress_track(
             # zero-length step that makes rates divide by zero.
             if last_sample is not None and fix["datetime"] <= last_sample:
                 continue
-            is_edge = position == 0 or position == len(span) - 1
-            if not is_edge and last_sample is not None:
-                if (fix["datetime"] - last_sample).total_seconds() < sample_seconds:
-                    continue
+            # The first and last fix of a leg are always kept: they are the
+            # turnpoint roundings, and thinning one away moves the leg.
+            is_edge = position in (0, len(span) - 1)
+            too_soon = (
+                last_sample is not None and (fix["datetime"] - last_sample).total_seconds() < sample_seconds
+            )
+            if too_soon and not is_edge:
+                continue
 
             remaining = GEOD.inv(fix["lon"], fix["lat"], target.longitude, target.latitude)[2]
             # Distance *achieved*, as a scorer counts it: everything behind the
@@ -470,13 +475,6 @@ class DeltaSegment:
     def height_delta_m(self) -> float | None:
         """Height against the reference where this stretch ends."""
         return self.end.delta_altitude_m
-
-    @property
-    def height_change_m(self) -> float | None:
-        """How much height this pilot gained or lost against the reference here."""
-        if self.start.delta_altitude_m is None or self.end.delta_altitude_m is None:
-            return None
-        return self.end.delta_altitude_m - self.start.delta_altitude_m
 
     @property
     def path(self) -> list[list[float]]:

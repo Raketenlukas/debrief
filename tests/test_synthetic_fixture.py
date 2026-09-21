@@ -30,7 +30,7 @@ def test_minute_rounding_carries():
 
 
 def test_aerofiles_parses_the_fixture_without_errors(synthetic_igc):
-    with open(synthetic_igc) as handle:
+    with synthetic_igc.open() as handle:
         parsed = Reader(skip_duplicates=True).read(handle)
     errors, trace = parsed["fix_records"]
     assert errors == []

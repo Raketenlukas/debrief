@@ -103,12 +103,18 @@ src/debrief/
   core/       pure analysis — no I/O, no UI
     models.py   Flight (fact) + Pilot / TaskDef (dimensions)
     igc.py      the only module that knows IGC syntax
+    trace.py    slicing a trace by time, by binary search
     metrics.py  the four metric families
     compare.py  a field over one task: leg deltas and distributions
     progress.py task distance over time, and the gap to a reference
     field.py    the whole field: the lift map, the routes, the composite
   sources/    importers; one per place flights come from
-  app/        Streamlit UI, Plotly charts, pydeck map
+  app/        Streamlit UI, Plotly charts, pydeck maps
+    format.py   numbers and times, formatted one way for the whole app
+    theme.py    the palettes and the base maps
+    charts.py   Plotly figures
+    maps/       one module per map: base, layers, flight, gap, field
+    day_view/   one module per tab: archive, tables, gap_tab, field_tab, view
   cli.py      text debrief
 tests/
   fixtures/synthetic.py   generates a flown task as a valid IGC file
@@ -421,6 +427,43 @@ at all if that matters to you.
 - **Wing loading is not in an IGC file.** The format records no mass and no
   ballast state, so it cannot be derived from a trace — only entered, or taken
   from a source that publishes it.
+
+## Performance
+
+A competition day is twenty flights of ten thousand fixes, and analysis is the
+slow part. Two things make it bearable, and one of them was worth an afternoon:
+
+**Fix timestamps are re-stamped with the standard library's UTC at load.**
+`aerofiles` attaches its own `TimeZoneFix`, whose `utcoffset` builds a fresh
+`timedelta` on every call — and every comparison between two aware datetimes
+calls it. It was the single most expensive thing this project did: 10 of 18
+seconds of a day's field analysis, across 16 million calls. `datetime.timezone.utc`
+answers the same question from C, and aerofiles says in the class itself that it
+exists for Python 2.6 and can be replaced once 3.x is the minimum, which it is
+here.
+
+**Trace slicing is a binary search, not a scan** (`core/trace.py`). "What
+happened between these two moments" is asked once per leg, once per thermal and
+once per stretch of course; written as a comprehension it costs a full pass
+each time.
+
+Measured on twenty synthetic flights of 10,160 fixes each:
+
+| | before | after |
+|---|---|---|
+| load + analyse the day | 6.2 s | 3.5 s |
+| the gap to a reference | 2.2 s | 0.4 s |
+| pool the field's climbs | 4.4 s | 0.01 s |
+| pool the field's routes | 4.2 s | 0.04 s |
+| build the composite | 1.9 s | 0.2 s |
+
+What remains in `load + analyse` is inside `aerofiles` and `opensoar` — a
+`strptime` per B record and a geodesic call per fix pair — so the lever there is
+not to do it twice. The day's analysis is cached on the files' paths and
+modification times, which is why switching back to a day you already looked at
+is instant. Analysing a day is also embarrassingly parallel across flights and
+is not parallelised; that is the next thing to try if it ever needs to be
+faster.
 
 ## Testing
 

@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from debrief.app.main import _safe_upload_path  # noqa: E402
+from debrief.app.main import _safe_upload_path
 
 
 @pytest.mark.parametrize(

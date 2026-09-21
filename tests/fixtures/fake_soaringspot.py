@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from tests.fixtures.synthetic import DEFAULT_TASK, build_igc
@@ -98,11 +98,11 @@ def results_html(competitors: tuple[Competitor, ...]) -> str:
 class _Handler(BaseHTTPRequestHandler):
     competitors: tuple[Competitor, ...] = DEFAULT_COMPETITORS
     date: dt.date = dt.date(2024, 6, 15)
-    request_log: list[str] = []
+    request_log: list[str] = field(default_factory=list)
 
     days: tuple[tuple[str, str], ...] = DEFAULT_DAYS
 
-    def do_GET(self):  # noqa: N802 - name fixed by BaseHTTPRequestHandler
+    def do_GET(self):
         type(self).request_log.append(self.path)
 
         parts = [p for p in self.path.split("/") if p]

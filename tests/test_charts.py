@@ -26,7 +26,7 @@ def test_the_reference_gets_no_line_of_its_own(progress):
     and takes a palette slot to say it."""
     figure = progress_delta_chart(progress, LIGHT)
     names = [trace.name for trace in figure.data]
-    reference = [p for p in progress.pilots if p.is_reference][0]
+    reference = next(p for p in progress.pilots if p.is_reference)
     assert reference.label not in names
     assert names == [p.label for p in progress.pilots if not p.is_reference]
 

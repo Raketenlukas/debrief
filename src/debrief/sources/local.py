@@ -97,7 +97,10 @@ def archived_days(root: str | Path) -> list[ArchivedDay]:
         if not date_dir.is_dir():
             continue
         try:
-            date = dt.datetime.strptime(date_dir.name, "%d-%m-%Y").date()
+            # A directory name is a calendar date, not a moment: the naive
+            # datetime exists only to be thrown away by .date() on the same
+            # line. Python has no date.strptime before 3.13.
+            date = dt.datetime.strptime(date_dir.name, "%d-%m-%Y").date()  # noqa: DTZ007
         except ValueError:
             continue
         paths = tuple(sorted(p for p in date_dir.glob("*.igc") if p.is_file()))

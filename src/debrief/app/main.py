@@ -21,20 +21,21 @@ import streamlit as st
 if __package__ is None or __package__ == "":  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from debrief.app import day_view, replay  # noqa: E402
-from debrief.app.charts import barogram, climb_profile  # noqa: E402
-from debrief.app.maps import flight_deck  # noqa: E402
-from debrief.app.theme import (  # noqa: E402
+from debrief.app import day_view, replay
+from debrief.app.charts import barogram, climb_profile
+from debrief.app.format import clock, number
+from debrief.app.maps import flight_deck
+from debrief.app.theme import (
     BASEMAPS,
     DEFAULT_BASEMAP,
     airspace_family,
     palette_for,
 )
-from debrief.core.airspace import Airspace, load_openair  # noqa: E402
-from debrief.core.igc import IGCError, load_igc  # noqa: E402
-from debrief.core.metrics import FlightMetrics, analyse_or_summarise  # noqa: E402
-from debrief.sources.local import LocalArchive  # noqa: E402
-from debrief.sources.soaringspot import (  # noqa: E402
+from debrief.core.airspace import Airspace, load_openair
+from debrief.core.igc import IGCError, load_igc
+from debrief.core.metrics import FlightMetrics, analyse_or_summarise
+from debrief.sources.local import LocalArchive
+from debrief.sources.soaringspot import (
     SoaringSpotDay,
     SoaringSpotError,
     import_class,
@@ -43,18 +44,6 @@ from debrief.sources.soaringspot import (  # noqa: E402
 DEFAULT_ARCHIVE = Path("data/igc")
 DEFAULT_AIRSPACE = Path("data/airspace")
 METRES_TO_FEET = 3.280839895
-
-
-def _fmt(value: float | None, spec: str = ".1f", suffix: str = "") -> str:
-    """Never print a formatted None; an unmeasurable metric shows as an em dash."""
-    return "—" if value is None else f"{value:{spec}}{suffix}"
-
-
-def _duration(seconds: float | None) -> str:
-    if not seconds:
-        return "—"
-    total = int(seconds)
-    return f"{total // 3600}:{(total % 3600) // 60:02d}:{total % 60:02d}"
 
 
 @st.cache_data(show_spinner=False)
@@ -276,46 +265,46 @@ def _stat_tiles(metrics: FlightMetrics) -> None:
     """Headline numbers, one per metric family."""
     row1 = st.columns(4)
     if metrics.has_task:
-        row1[0].metric("Task speed", _fmt(metrics.task_speed_kmh, ".1f", " km/h"))
-        row1[1].metric("Task distance", _fmt(metrics.task_distance_km, ".1f", " km"))
-        row1[2].metric("Time on task", _duration(metrics.task_duration_s))
+        row1[0].metric("Task speed", number(metrics.task_speed_kmh, 1, " km/h"))
+        row1[1].metric("Task distance", number(metrics.task_distance_km, 1, " km"))
+        row1[2].metric("Time on task", clock(metrics.task_duration_s))
     else:
         # No task, so no task speed or task distance to report. Showing the
         # track length instead is honest; calling it "distance" would not be.
-        row1[0].metric("Distance flown", _fmt(metrics.distance_flown_km, ".1f", " km"))
+        row1[0].metric("Distance flown", number(metrics.distance_flown_km, 1, " km"))
         band = f"{metrics.overall.altitude_min:.0f}–{metrics.overall.altitude_max:.0f} m"
         row1[1].metric("Altitude band", band)
-        row1[2].metric("Airborne", _duration(metrics.task_duration_s))
+        row1[2].metric("Airborne", clock(metrics.task_duration_s))
     row1[3].metric(
         "Start" if metrics.has_task else "Takeoff",
         f"{metrics.start_time:%H:%M}" if metrics.start_time else "—",
-        _fmt(metrics.start_altitude, ".0f", " m"),
+        number(metrics.start_altitude, 0, " m"),
         delta_color="off",
     )
 
     row2 = st.columns(4)
     row2[0].metric(
         "Average climb",
-        _fmt(metrics.average_climb_ms, ".2f", " m/s"),
+        number(metrics.average_climb_ms, 2, " m/s"),
         f"{metrics.thermal_count} thermals",
         delta_color="off",
     )
     row2[1].metric(
         "Circling",
-        _fmt(metrics.percent_circling, ".0f", " %"),
-        _duration(metrics.circling_s),
+        number(metrics.percent_circling, 0, " %"),
+        clock(metrics.circling_s),
         delta_color="off",
     )
     row2[2].metric(
         "Cruise speed",
-        _fmt(metrics.cruise_speed_kmh, ".0f", " km/h"),
-        f"L/D {_fmt(metrics.glide_ratio, '.1f')}",
+        number(metrics.cruise_speed_kmh, 0, " km/h"),
+        f"L/D {number(metrics.glide_ratio, 1)}",
         delta_color="off",
     )
     row2[3].metric(
         "Cruise detour",
-        _fmt(metrics.detour_percent, "+.1f", " %"),
-        f"final glide {_fmt(metrics.final_glide_km, '.0f', ' km')}",
+        number(metrics.detour_percent, 1, " %", sign=True),
+        f"final glide {number(metrics.final_glide_km, 0, ' km')}",
         delta_color="off",
     )
 
@@ -339,7 +328,7 @@ def _leg_table(metrics: FlightMetrics) -> None:
         {
             "Leg": leg.label,
             "km": f"{leg.task_distance_km:.1f}",
-            "Time": _duration(leg.duration_s),
+            "Time": clock(leg.duration_s),
             "km/h": num(leg.speed_kmh, 1),
             "Thermals": str(leg.thermal_count),
             "Climb m/s": num(leg.average_climb_ms, 2),

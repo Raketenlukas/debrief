@@ -7,11 +7,12 @@ unit, where it leaves deck.gl with an invalid unit and renders the track as a
 giant filled blob rather than a line. Nothing raises — it just draws wrong.
 """
 
+import itertools
 import json
 
 import pytest
 
-from debrief.app.maps import _sector_ring, _view_state, flight_deck, hex_to_rgb
+from debrief.app.maps import flight_deck, hex_to_rgb, sector_ring, view_state
 from debrief.app.theme import DARK, DEFAULT_BASEMAP, LIGHT
 from debrief.core.igc import load_igc
 from debrief.core.metrics import analyse
@@ -96,7 +97,7 @@ def test_track_segments_join_without_gaps(deck_spec):
     )
     segments = track["data"]
     # Deliberately not strict=True: the offset slice is one shorter by design.
-    for first, second in zip(segments, segments[1:]):  # noqa: B905
+    for first, second in itertools.pairwise(segments):
         assert first["path"][-1] == second["path"][0]
 
 
@@ -106,7 +107,7 @@ def test_hex_to_rgb():
 
 
 def test_sector_ring_is_closed_and_circular():
-    ring = _sector_ring(51.0, 14.0, 3000.0, points=36)
+    ring = sector_ring(51.0, 14.0, 3000.0, points=36)
     assert len(ring) == 37
     assert ring[0] == pytest.approx(ring[-1])
     from pyproj import Geod
@@ -128,7 +129,7 @@ def test_view_state_frames_the_whole_track(synthetic_igc):
 
     width_px, height_px = 1040.0, 500.0
     trace = load_igc(synthetic_igc).trace
-    view = _view_state(trace, width_px=width_px, height_px=height_px)
+    view = view_state(trace, width_px=width_px, height_px=height_px)
 
     lats = [f["lat"] for f in trace]
     lons = [f["lon"] for f in trace]
@@ -232,7 +233,7 @@ def progress(synthetic_igc, second_pilot_igc):
 def progress_spec(progress):
     from debrief.app.maps import progress_deck
 
-    subject = [p for p in progress.pilots if not p.is_reference][0]
+    subject = next(p for p in progress.pilots if not p.is_reference)
     return json.loads(progress_deck(progress, subject, LIGHT, DEFAULT_BASEMAP).to_json())
 
 
@@ -273,12 +274,12 @@ def test_a_field_reference_draws_no_reference_track(synthetic_igc, second_pilot_
 
 def test_losing_time_is_red_and_gaining_it_is_blue(progress):
     """The one thing a diverging scale must never get backwards."""
-    from debrief.app.maps import PROGRESS_TIME, _segment_loss, progress_thresholds
+    from debrief.app.maps import PROGRESS_TIME, progress_thresholds, segment_loss
 
     soft, hard, _ = progress_thresholds(PROGRESS_TIME)
-    subject = [p for p in progress.pilots if not p.is_reference][0]
+    subject = next(p for p in progress.pilots if not p.is_reference)
     worst = subject.ranked_segments(worst_first=True)[0]
-    assert _segment_loss(worst, PROGRESS_TIME) == worst.lost_s
+    assert segment_loss(worst, PROGRESS_TIME) == worst.lost_s
     assert LIGHT.diverging.color(worst.lost_s, soft, hard) == LIGHT.diverging.loss_strong
     assert LIGHT.diverging.color(-worst.lost_s, soft, hard) == LIGHT.diverging.gain_strong
 
@@ -286,13 +287,13 @@ def test_losing_time_is_red_and_gaining_it_is_blue(progress):
 def test_height_flips_sign_so_that_lower_reads_as_worse(progress):
     """Being below the reference is the bad one. A scale whose red arm meant
     'higher' would send a pilot exactly the wrong message."""
-    from debrief.app.maps import PROGRESS_HEIGHT, _segment_loss
+    from debrief.app.maps import PROGRESS_HEIGHT, segment_loss
 
-    subject = [p for p in progress.pilots if not p.is_reference][0]
+    subject = next(p for p in progress.pilots if not p.is_reference)
     measured = [s for s in subject.segments if s.height_delta_m is not None]
     assert measured
     for segment in measured[:20]:
-        assert _segment_loss(segment, PROGRESS_HEIGHT) == -segment.height_delta_m
+        assert segment_loss(segment, PROGRESS_HEIGHT) == -segment.height_delta_m
 
 
 def test_thicker_track_means_a_bigger_difference(progress_spec):

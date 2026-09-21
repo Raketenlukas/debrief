@@ -7,6 +7,7 @@ drawing it, because it reads as an answer.
 """
 
 import datetime as dt
+import itertools
 
 import pytest
 
@@ -229,7 +230,7 @@ def test_segments_cover_the_track_without_gaps(fast, slow):
     samples = delta_samples(progress_track(slow), progress_track(fast))
     segments = delta_segments(samples, segment_m=2000.0)
     assert segments
-    for before, after in zip(segments, segments[1:], strict=False):
+    for before, after in itertools.pairwise(segments):
         # The shared boundary sample is what keeps the drawn line continuous.
         assert before.end is after.start
 
@@ -276,7 +277,7 @@ def test_uncomparable_stretches_are_kept_apart_from_measured_ones(fast, slow):
         assert len(measured) == 1, "a segment must not straddle the reference's end"
     # and the break itself is visible: the two runs do not share a sample
     segments = delta_segments(samples)
-    boundaries = [(a, b) for a, b in zip(segments, segments[1:], strict=False) if a.end is not b.start]
+    boundaries = [(a, b) for a, b in itertools.pairwise(segments) if a.end is not b.start]
     assert len(boundaries) == 1
 
 
@@ -344,7 +345,7 @@ def test_the_worst_minutes_come_out_worst_first(fast, slow):
     pilot = progress.for_key(slow.flight.flight_key)
     ranked = pilot.ranked_segments(worst_first=True)
     assert ranked
-    assert all(a.lost_s >= b.lost_s for a, b in zip(ranked, ranked[1:], strict=False))
+    assert all(a.lost_s >= b.lost_s for a, b in itertools.pairwise(ranked))
     assert pilot.ranked_segments(worst_first=False)[0] is ranked[-1]
 
 
