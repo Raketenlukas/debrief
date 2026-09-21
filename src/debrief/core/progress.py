@@ -188,6 +188,21 @@ class ProgressTrack:
         """Height on first reaching ``distance_m``."""
         return _interpolate(self.distance_m, self.altitude_m, distance_m)
 
+    def path_between(self, start_m: float, end_m: float) -> list[list[float]]:
+        """The ground track flown while covering this stretch of course.
+
+        Every sample from first reaching ``start_m`` to first reaching
+        ``end_m``, so a stretch whose glider stopped to climb is drawn through
+        the circling rather than as the straight line it never flew.
+        """
+        if not self.longitude:
+            return []
+        first = bisect_left(self.distance_m, start_m)
+        last = bisect_left(self.distance_m, end_m)
+        first = max(first - 1, 0)
+        last = min(last + 1, len(self) - 1)
+        return [[self.longitude[i], self.latitude[i]] for i in range(first, last + 1)]
+
 
 def progress_track(
     metrics: FlightMetrics,

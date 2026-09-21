@@ -89,6 +89,48 @@ class DivergingScale:
 
 
 @dataclass(frozen=True)
+class SequentialRamp:
+    """Magnitude: one hue, stepped light to dark, no polarity implied.
+
+    Used where a number has a floor and no meaningful middle — how strong the
+    climbs were in a cell, how many gliders crossed it, how fast a stretch of
+    course went. A diverging scale would invent a midpoint these have no reason
+    to have, and a rainbow would invent an order out of hue.
+
+    Five steps from the documented blue ramp, stepped monotonically in
+    lightness (adjacent ΔL ≥ 0.09 against a floor of 0.06). Dark mode flips the
+    anchor rather than the hue: the end nearest the surface is the pale one on
+    a dark page and the dark one on a light page, so "near the floor" always
+    means "receding into the background". Both ends sit at the ramp's
+    documented ordinal bounds, where the surface-nearest step still clears
+    2:1 (2.06 light, 2.15 dark) — these are fills with an outline and a
+    labelled legend, not colour-alone marks.
+    """
+
+    steps: tuple[str, ...]
+
+    def color(self, value: float | None, low: float, high: float) -> str:
+        """Colour for a value, clamped to ``[low, high]``."""
+        if value is None or high <= low:
+            return self.steps[0]
+        fraction = min(max((value - low) / (high - low), 0.0), 1.0)
+        index = min(int(fraction * len(self.steps)), len(self.steps) - 1)
+        return self.steps[index]
+
+    def legend(self, low: float, high: float, unit: str, digits: int = 1) -> list[tuple[str, str]]:
+        out = []
+        width = (high - low) / len(self.steps)
+        for index, step in enumerate(self.steps):
+            start = low + index * width
+            end = start + width
+            if index == len(self.steps) - 1:
+                out.append((step, f"{start:.{digits}f}{unit} and up"))
+            else:
+                out.append((step, f"{start:.{digits}f}-{end:.{digits}f}{unit}"))
+        return out
+
+
+@dataclass(frozen=True)
 class Palette:
     surface: str
     page: str
@@ -105,6 +147,7 @@ class Palette:
     thermal: str
     thermal_band: str
     diverging: DivergingScale
+    sequential: SequentialRamp
 
     def leg_color(self, index: int) -> str:
         """Colour follows the leg, never its rank, so filtering never repaints.
@@ -181,6 +224,8 @@ LIGHT = Palette(
         loss="#bf6c64",
         loss_strong="#e34948",
     ),
+    # Blue ramp steps 250 -> 650: light end nearest the page.
+    sequential=SequentialRamp(("#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281")),
 )
 
 DARK = Palette(
@@ -233,6 +278,9 @@ DARK = Palette(
         loss="#bf7973",
         loss_strong="#e66767",
     ),
+    # Blue ramp steps 600 -> 200: the anchor flips, so the dark end is the one
+    # nearest the page here.
+    sequential=SequentialRamp(("#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4")),
 )
 
 

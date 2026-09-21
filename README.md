@@ -106,6 +106,7 @@ src/debrief/
     metrics.py  the four metric families
     compare.py  a field over one task: leg deltas and distributions
     progress.py task distance over time, and the gap to a reference
+    field.py    the whole field: the lift map, the routes, the composite
   sources/    importers; one per place flights come from
   app/        Streamlit UI, Plotly charts, pydeck map
   cli.py      text debrief
@@ -258,6 +259,74 @@ difference, the five worst stretches are ringed, hovering gives the numbers, and
 the table lists them with the clock time, the time into the task and the
 turnpoint they happened before.
 
+## The day's map
+
+Two maps built from the *whole* class, not from the pilots you ticked — a map
+of the lift drawn from four flights is a map of four flights.
+
+**Where the lift was** pools every climb the field found, bins them into
+equal-area cells and shades each cell by the average climb rate in it. The
+tooltip says how many climbs and how many pilots that average rests on, which
+is the difference that matters: a dark cell visited once is one pilot's good
+luck, a dark cell visited by eight is where the day was. Climbs under 100 m or
+45 s are dropped — the phase detector counts a bump taken in a turn as a climb,
+and by number those would swamp the decisions a pilot actually made.
+
+**Where they flew** pools the flying *between* the climbs and shades by how
+many different pilots crossed each cell. Circling is excluded, so this is the
+map of chosen routes rather than a second map of thermals, and counting pilots
+rather than fixes stops a slow glider outvoting a fast one.
+
+Cells are binned in an azimuthal equidistant projection centred on the flights
+themselves, so a 5 km cell is 5 km at every competition site. Binned in
+degrees it would not be, and two sites could not be compared at all.
+
+## The best that was there
+
+The fastest anyone covered each stretch of the course, assembled into one
+route. Nobody flew it: it is the day's ceiling, and the gap between it and the
+quickest actual flight is what was left on the table.
+
+The construction has one rule that makes it worth looking at, and it is not
+obvious. Simply taking the quickest crossing of every stretch builds a glider
+that never climbs — at every stretch *somebody* was gliding through, so the
+minimum always picks a glide, and the result flies the whole task without
+stopping and "beats" the winner by seventy minutes. That is not a ceiling, it
+is an artefact of taking a minimum over a population.
+
+So the composite carries a height. It may only use a piece whose pilot entered
+it no higher than the composite currently is — you cannot borrow a glide that
+started above you — and it leaves having lost exactly what that pilot lost,
+capped at the highest anyone reached there. Climbs stop being optional: the
+composite has to buy its altitude the same way everyone else did, out of the
+lift that was actually there. It is a shortest-path search over (stretch,
+height) rather than a greedy pass, because the quickest crossing of a stretch
+is often the one that arrives lowest, and paying thirty seconds for height here
+is regularly what makes the next two stretches possible.
+
+Two properties fall out, and both are tested: every single pilot's own flight
+is a legal path through the search, so the composite is **never slower than the
+quickest of them**; and finer pieces never produce a slower composite, because
+every coarse piece is a run of fine ones.
+
+It is still a ceiling and not a plan. Its pieces were flown by different pilots
+in different gliders at different times of day, and the ringed joins on the map
+are where it changes hands. The table below it says who supplied what — a
+composite dominated by one name is a day somebody simply flew better; one
+spread across ten is a day where the winner was whoever strung together the
+most of what was available. Make the pieces long enough and it collapses to the
+winner's actual flight, which is the sanity check on the whole idea.
+
+Two things it does **not** know, both of which matter before you read it as
+achievable:
+
+- **Polars.** A glide borrowed from a JS3 is not reproducible in a Discus. The
+  composite records which glider flew each piece so you can see when this
+  applies, but it does not model performance. Feeding it real polars is the
+  natural next step — see *Known constraints*.
+- **Wing loading.** It is not in an IGC file at all: the format carries no mass
+  and no ballast state. Nothing here can infer it.
+
 ## The map
 
 deck.gl, driven from `pydeck`. Drag to pan, scroll to zoom, hover anything for
@@ -336,6 +405,22 @@ at all if that matters to you.
   used with it. Pinned accordingly in `pyproject.toml`.
 - Multistart tasks are not scoreable — `opensoar` does not support them.
 - AAT scoring works but is far less exercised here than race tasks.
+- Engine noise (ENL/MOP) is read from the file but not checked, so a
+  self-launcher's numbers are not automatically flagged as unpowered.
+- **No glider performance model.** Nothing here knows a polar, so it cannot say
+  whether a glide one pilot achieved was available to another, cannot compute
+  the speed-to-fly the day's climbs called for, and cannot compare across
+  gliders except by the times they actually flew. The pieces needed are all
+  public: XCSoar's `PolarStore` carries reference mass, maximum ballast, three
+  (speed, sink) points, wing area and a contest handicap for around 250 types.
+  It is GPL-2.0-or-later, so it would be fetched rather than vendored into this
+  tree. With it, three analyses become possible that are impossible now:
+  speed-to-fly against the climbs each pilot actually got, handicapped
+  comparison across types, and the wing loading that would have suited the
+  day's climb rates.
+- **Wing loading is not in an IGC file.** The format records no mass and no
+  ballast state, so it cannot be derived from a trace — only entered, or taken
+  from a source that publishes it.
 
 ## Testing
 
